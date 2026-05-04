@@ -1,0 +1,1765 @@
+{
+  "info": {
+    "_postman_id": "krpc-mechjeb-collection-v1",
+    "name": "KSP kRPC & kRPC-MechJeb",
+    "description": "Postman collection for the kRPC Kerbal Space Program remote procedure call API and the kRPC-MechJeb addon.\n\n## Protocol\nkRPC communicates via Protocol Buffers over TCP/IP (port 50000) or WebSocket. This collection assumes a thin HTTP proxy that forwards POST requests to the kRPC server.\n\n## Quick start\n1. Run KSP with kRPC installed and server running (default port 50000).\n2. Start an HTTP proxy (see proxy/README) or set `krpc_host` to a running proxy URL.\n3. Run **KRPC Core / Get Services** to verify the connection.\n4. Run all requests in **SpaceCenter / Vessel** → **Get Active Vessel** to populate handle variables.\n5. Proceed with Control, AutoPilot, Flight, Orbit, or MechJeb folders.\n\n## Encoding\nAll argument and return values are raw Protocol Buffer encoded bytes, base64-encoded:\n- **uint64 handle** — varint encoding of the object handle integer\n- **float** — 4-byte IEEE 754 little-endian\n- **double** — 8-byte IEEE 754 little-endian\n- **bool** — single byte: `AQ==` (true) / `AA==` (false)\n- **int32/enum** — varint encoding\n- **string** — varint length prefix + UTF-8 bytes\n\n## Common encoded values\n| Value | Base64 |\n|---|---|\n| bool false / int 0 | `AA==` |\n| bool true / int 1 | `AQ==` |\n| int 2 | `Ag==` |\n| int 3 | `Aw==` |\n| int 4 | `BA==` |\n| int 5 | `BQ==` |\n| float 0.0 | `AAAAAA==` |\n| float 0.5 | `AAAAPw==` |\n| float 1.0 | `AACAPw==` |\n\n## Request/Response shape\n```json\n// Request\n{ \"calls\": [{ \"service\": \"SpaceCenter\", \"procedure\": \"get_ActiveVessel\", \"arguments\": [] }] }\n\n// Response\n{ \"results\": [{ \"error\": null, \"value\": \"<base64>\" }] }\n```\n\n## kRPC-MechJeb\nRequires the KRPC.MechJeb addon by Genhis (github.com/Genhis/KRPC.MechJeb). All MechJeb requests take the vessel handle as first argument to get a MechJeb controller object, then call methods on that object.\n\n## Version note\nVerify procedure names against `KRPC.GetServices()` for your installed version.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "krpc_host", "value": "http://localhost:50000", "type": "string", "description": "kRPC HTTP proxy URL" },
+    { "key": "vessel_id", "value": "", "type": "string", "description": "Active vessel handle (base64 varint) — set by Get Active Vessel" },
+    { "key": "surface_ref_id", "value": "", "type": "string", "description": "Surface reference frame handle — set by Get Surface Reference Frame" },
+    { "key": "control_id", "value": "", "type": "string", "description": "Control handle — set by Get Control" },
+    { "key": "autopilot_id", "value": "", "type": "string", "description": "AutoPilot handle — set by Get AutoPilot" },
+    { "key": "flight_id", "value": "", "type": "string", "description": "Flight handle — set by Get Flight" },
+    { "key": "orbit_id", "value": "", "type": "string", "description": "Orbit handle — set by Get Orbit" },
+    { "key": "resources_id", "value": "", "type": "string", "description": "Resources handle — set by Get Resources" },
+    { "key": "mj_smartass_id", "value": "", "type": "string", "description": "MechJeb SmartASS handle — set by MechJeb / Get SmartASS" },
+    { "key": "mj_ascent_id", "value": "", "type": "string", "description": "MechJeb AscentAutopilot handle" },
+    { "key": "mj_landing_id", "value": "", "type": "string", "description": "MechJeb LandingAutopilot handle" },
+    { "key": "mj_node_executor_id", "value": "", "type": "string", "description": "MechJeb NodeExecutor handle" },
+    { "key": "mj_maneuver_planner_id", "value": "", "type": "string", "description": "MechJeb ManeuverPlanner handle" },
+    { "key": "mj_rendezvous_id", "value": "", "type": "string", "description": "MechJeb RendezvousAutopilot handle" },
+    { "key": "_h", "value": "", "type": "string", "description": "kRPC encoding helper code (injected by collection pre-request script)" }
+  ],
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "const code = [",
+          "  'function kRPC_encodeUint64(v){const b=[];let n=BigInt(v);do{let x=Number(n&0x7Fn);n>>=7n;if(n>0n)x|=0x80;b.push(x);}while(n>0n);return btoa(String.fromCharCode(...b));}',",
+          "  'function kRPC_encodeBool(v){return btoa(String.fromCharCode(v?1:0));}',",
+          "  'function kRPC_encodeFloat(v){const b=new ArrayBuffer(4);new DataView(b).setFloat32(0,v,true);return btoa(String.fromCharCode(...new Uint8Array(b)));}',",
+          "  'function kRPC_encodeDouble(v){const b=new ArrayBuffer(8);new DataView(b).setFloat64(0,v,true);return btoa(String.fromCharCode(...new Uint8Array(b)));}',",
+          "  'function kRPC_encodeInt32(v){const b=[];let n=v>>>0;do{let x=n&0x7F;n>>>=7;if(n>0)x|=0x80;b.push(x);}while(n>0);return btoa(String.fromCharCode(...b));}',",
+          "  'function kRPC_encodeString(s){const u=unescape(encodeURIComponent(s));const b=[];let n=u.length;do{let x=n&0x7F;n>>>=7;if(n>0)x|=0x80;b.push(x);}while(n>0);for(let i=0;i<u.length;i++)b.push(u.charCodeAt(i));return btoa(String.fromCharCode(...b));}',",
+          "  'function kRPC_decodeUint64(s){const b=[...atob(s)].map(c=>c.charCodeAt(0));let v=0n,sh=0n;for(const x of b){v|=BigInt(x&0x7F)<<sh;sh+=7n;if(!(x&0x80))break;}return Number(v);}',",
+          "  'function kRPC_decodeFloat(s){const b=[...atob(s)].map(c=>c.charCodeAt(0));const a=new ArrayBuffer(4);new Uint8Array(a).set(b.slice(0,4));return new DataView(a).getFloat32(0,true);}',",
+          "  'function kRPC_decodeDouble(s){const b=[...atob(s)].map(c=>c.charCodeAt(0));const a=new ArrayBuffer(8);new Uint8Array(a).set(b.slice(0,8));return new DataView(a).getFloat64(0,true);}',",
+          "  'function kRPC_decodeInt32(s){const b=[...atob(s)].map(c=>c.charCodeAt(0));let v=0,sh=0;for(const x of b){v|=(x&0x7F)<<sh;sh+=7;if(!(x&0x80))break;}return v;}',",
+          "  'function kRPC_decodeString(s){const b=[...atob(s)].map(c=>c.charCodeAt(0));let i=0,len=0,sh=0;while(i<b.length){const x=b[i++];len|=(x&0x7F)<<sh;sh+=7;if(!(x&0x80))break;}return decodeURIComponent(escape(String.fromCharCode(...b.slice(i,i+len))));}',",
+          "  'function kRPC_getResult(res,idx){const r=(res.results||[])[idx||0];if(!r)return null;if(r.error)throw new Error(JSON.stringify(r.error));return r.value;}'",
+          "].join('\\n');",
+          "pm.collectionVariables.set('_h', code);"
+        ]
+      }
+    }
+  ],
+  "item": [
+    {
+      "name": "KRPC Core",
+      "description": "Core kRPC server procedures — server status, service discovery, and client identity.",
+      "item": [
+        {
+          "name": "Get Status",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"calls\": [\n        {\n            \"service\": \"KRPC\",\n            \"procedure\": \"GetStatus\",\n            \"arguments\": []\n        }\n    ]\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": { "raw": "{{krpc_host}}" },
+            "description": "Returns the kRPC server status including version and number of RPC calls processed."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('No error', () => {",
+                  "    const res = pm.response.json();",
+                  "    pm.expect(res.results[0].error).to.be.null;",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get Services",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"calls\": [\n        {\n            \"service\": \"KRPC\",\n            \"procedure\": \"GetServices\",\n            \"arguments\": []\n        }\n    ]\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": { "raw": "{{krpc_host}}" },
+            "description": "Returns descriptions of all available services and their procedures. Use to verify installed services (SpaceCenter, MechJeb, etc.) and their exact procedure names and argument types."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "const res = pm.response.json();",
+                  "pm.test('No error', () => pm.expect(res.results[0].error).to.be.null);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get Client ID",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"calls\": [\n        {\n            \"service\": \"KRPC\",\n            \"procedure\": \"GetClientID\",\n            \"arguments\": []\n        }\n    ]\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": { "raw": "{{krpc_host}}" },
+            "description": "Returns the identifier of the current client connection."
+          }
+        },
+        {
+          "name": "Get Client Name",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"calls\": [\n        {\n            \"service\": \"KRPC\",\n            \"procedure\": \"GetClientName\",\n            \"arguments\": []\n        }\n    ]\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": { "raw": "{{krpc_host}}" },
+            "description": "Returns the name of the current client."
+          }
+        }
+      ]
+    },
+    {
+      "name": "SpaceCenter / Vessel",
+      "description": "Vessel discovery and general vessel properties. Run Get Active Vessel first to populate {{vessel_id}}.",
+      "item": [
+        {
+          "name": "Get Active Vessel",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"calls\": [\n        {\n            \"service\": \"SpaceCenter\",\n            \"procedure\": \"get_ActiveVessel\",\n            \"arguments\": []\n        }\n    ]\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": { "raw": "{{krpc_host}}" },
+            "description": "Returns the currently active vessel handle. Stored in {{vessel_id}}."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "eval(pm.collectionVariables.get('_h'));",
+                  "pm.test('Got active vessel', () => {",
+                  "    const res = pm.response.json();",
+                  "    pm.expect(res.results[0].error).to.be.null;",
+                  "    const b64 = res.results[0].value;",
+                  "    pm.collectionVariables.set('vessel_id', b64);",
+                  "    console.log('vessel_id set to', b64, '(handle:', kRPC_decodeUint64(b64), ')');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get All Vessels",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"calls\": [\n        {\n            \"service\": \"SpaceCenter\",\n            \"procedure\": \"get_Vessels\",\n            \"arguments\": []\n        }\n    ]\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": { "raw": "{{krpc_host}}" },
+            "description": "Returns a list of all vessels in the game."
+          }
+        },
+        {
+          "name": "Get Vessel Name",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"calls\": [\n        {\n            \"service\": \"SpaceCenter\",\n            \"procedure\": \"Vessel_get_Name\",\n            \"arguments\": [\n                { \"position\": 0, \"value\": \"{{vessel_id}}\" }\n            ]\n        }\n    ]\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": { "raw": "{{krpc_host}}" },
+            "description": "Returns the name of the vessel. Requires {{vessel_id}}."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "eval(pm.collectionVariables.get('_h'));",
+                  "const res = pm.response.json();",
+                  "if (res.results[0] && !res.results[0].error) {",
+                  "    console.log('Vessel name:', kRPC_decodeString(res.results[0].value));",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get Vessel MET",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"calls\": [\n        {\n            \"service\": \"SpaceCenter\",\n            \"procedure\": \"Vessel_get_MET\",\n            \"arguments\": [\n                { \"position\": 0, \"value\": \"{{vessel_id}}\" }\n            ]\n        }\n    ]\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": { "raw": "{{krpc_host}}" },
+            "description": "Returns the Mission Elapsed Time (MET) of the vessel in seconds (double)."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "eval(pm.collectionVariables.get('_h'));",
+                  "const res = pm.response.json();",
+                  "if (res.results[0] && !res.results[0].error) {",
+                  "    console.log('MET (s):', kRPC_decodeDouble(res.results[0].value));",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get Vessel Mass",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"calls\": [\n        {\n            \"service\": \"SpaceCenter\",\n            \"procedure\": \"Vessel_get_Mass\",\n            \"arguments\": [\n                { \"position\": 0, \"value\": \"{{vessel_id}}\" }\n            ]\n        }\n    ]\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": { "raw": "{{krpc_host}}" },
+            "description": "Returns the total mass of the vessel in kg (float)."
+          }
+        },
+        {
+          "name": "Get Vessel Situation",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"calls\": [\n        {\n            \"service\": \"SpaceCenter\",\n            \"procedure\": \"Vessel_get_Situation\",\n            \"arguments\": [\n                { \"position\": 0, \"value\": \"{{vessel_id}}\" }\n            ]\n        }\n    ]\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": { "raw": "{{krpc_host}}" },
+            "description": "Returns the current situation of the vessel (enum VesselSituation: PreLaunch=0, Landed=1, Splashed=2, Flying=3, SubOrbital=4, Orbiting=5, Escaping=6, Docked=7)."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "eval(pm.collectionVariables.get('_h'));",
+                  "const situations = ['PreLaunch','Landed','Splashed','Flying','SubOrbital','Orbiting','Escaping','Docked'];",
+                  "const res = pm.response.json();",
+                  "if (res.results[0] && !res.results[0].error) {",
+                  "    const v = kRPC_decodeInt32(res.results[0].value);",
+                  "    console.log('Situation:', situations[v] || v);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get Surface Reference Frame",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"calls\": [\n        {\n            \"service\": \"SpaceCenter\",\n            \"procedure\": \"Vessel_get_SurfaceReferenceFrame\",\n            \"arguments\": [\n                { \"position\": 0, \"value\": \"{{vessel_id}}\" }\n            ]\n        }\n    ]\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": { "raw": "{{krpc_host}}" },
+            "description": "Returns the surface reference frame handle for the vessel. Stored in {{surface_ref_id}}. Required by Get Flight."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "eval(pm.collectionVariables.get('_h'));",
+                  "const res = pm.response.json();",
+                  "if (res.results[0] && !res.results[0].error) {",
+                  "    pm.collectionVariables.set('surface_ref_id', res.results[0].value);",
+                  "    console.log('surface_ref_id set:', res.results[0].value);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "SpaceCenter / Control",
+      "description": "Vessel flight control inputs. All requests require {{control_id}} — run Get Control first.",
+      "item": [
+        {
+          "name": "Get Control",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"calls\": [\n        {\n            \"service\": \"SpaceCenter\",\n            \"procedure\": \"Vessel_get_Control\",\n            \"arguments\": [\n                { \"position\": 0, \"value\": \"{{vessel_id}}\" }\n            ]\n        }\n    ]\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": { "raw": "{{krpc_host}}" },
+            "description": "Returns the Control object for the active vessel. Stored in {{control_id}}."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "eval(pm.collectionVariables.get('_h'));",
+                  "const res = pm.response.json();",
+                  "if (res.results[0] && !res.results[0].error) {",
+                  "    pm.collectionVariables.set('control_id', res.results[0].value);",
+                  "    console.log('control_id set:', res.results[0].value);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get Throttle",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"calls\": [\n        {\n            \"service\": \"SpaceCenter\",\n            \"procedure\": \"Control_get_Throttle\",\n            \"arguments\": [\n                { \"position\": 0, \"value\": \"{{control_id}}\" }\n            ]\n        }\n    ]\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": { "raw": "{{krpc_host}}" },
+            "description": "Returns the current throttle setting (0.0–1.0 float)."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "eval(pm.collectionVariables.get('_h'));",
+                  "const res = pm.response.json();",
+                  "if (res.results[0] && !res.results[0].error)",
+                  "    console.log('Throttle:', kRPC_decodeFloat(res.results[0].value));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Set Throttle",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"calls\": [\n        {\n            \"service\": \"SpaceCenter\",\n            \"procedure\": \"Control_set_Throttle\",\n            \"arguments\": [\n                { \"position\": 0, \"value\": \"{{control_id}}\" },\n                { \"position\": 1, \"value\": \"AACAPw==\" }\n            ]\n        }\n    ]\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": { "raw": "{{krpc_host}}" },
+            "description": "Sets the throttle (0.0–1.0). Argument position 1 is a base64-encoded float32. Common values: `AAAAAA==` (0.0), `AAAAPw==` (0.5), `AACAPw==` (1.0). Use the collection pre-request helper `kRPC_encodeFloat(value)` to compute any value."
+          }
+        },
+        {
+          "name": "Get SAS",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"calls\": [\n        {\n            \"service\": \"SpaceCenter\",\n            \"procedure\": \"Control_get_SAS\",\n            \"arguments\": [\n                { \"position\": 0, \"value\": \"{{control_id}}\" }\n            ]\n        }\n    ]\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": { "raw": "{{krpc_host}}" },
+            "description": "Returns the current SAS state (bool)."
+          }
+        },
+        {
+          "name": "Set SAS (Enable)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"calls\": [\n        {\n            \"service\": \"SpaceCenter\",\n            \"procedure\": \"Control_set_SAS\",\n            \"arguments\": [\n                { \"position\": 0, \"value\": \"{{control_id}}\" },\n                { \"position\": 1, \"value\": \"AQ==\" }\n            ]\n        }\n    ]\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": { "raw": "{{krpc_host}}" },
+            "description": "Enables SAS. Use `AA==` for false to disable."
+          }
+        },
+        {
+          "name": "Get SAS Mode",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"calls\": [\n        {\n            \"service\": \"SpaceCenter\",\n            \"procedure\": \"Control_get_SASMode\",\n            \"arguments\": [\n                { \"position\": 0, \"value\": \"{{control_id}}\" }\n            ]\n        }\n    ]\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": { "raw": "{{krpc_host}}" },
+            "description": "Returns SAS mode enum (SASMode: StabilityAssist=0, Maneuver=1, Prograde=2, Retrograde=3, Normal=4, AntiNormal=5, Radial=6, AntiRadial=7, Target=8, AntiTarget=9)."
+          }
+        },
+        {
+          "name": "Set SAS Mode",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"calls\": [\n        {\n            \"service\": \"SpaceCenter\",\n            \"procedure\": \"Control_set_SASMode\",\n            \"arguments\": [\n                { \"position\": 0, \"value\": \"{{control_id}}\" },\n                { \"position\": 1, \"value\": \"Ag==\" }\n            ]\n        }\n    ]\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": { "raw": "{{krpc_host}}" },
+            "description": "Sets SAS mode. Argument 1 is a varint enum value. `AA==`=StabilityAssist, `AQ==`=Maneuver, `Ag==`=Prograde, `Aw==`=Retrograde, `BA==`=Normal, `BQ==`=AntiNormal, `Bg==`=Radial, `Bw==`=AntiRadial, `CA==`=Target, `CQ==`=AntiTarget."
+          }
+        },
+        {
+          "name": "Get RCS",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"calls\": [\n        {\n            \"service\": \"SpaceCenter\",\n            \"procedure\": \"Control_get_RCS\",\n            \"arguments\": [\n                { \"position\": 0, \"value\": \"{{control_id}}\" }\n            ]\n        }\n    ]\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": { "raw": "{{krpc_host}}" },
+            "description": "Returns whether RCS thrusters are enabled (bool)."
+          }
+        },
+        {
+          "name": "Set RCS",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"calls\": [\n        {\n            \"service\": \"SpaceCenter\",\n            \"procedure\": \"Control_set_RCS\",\n            \"arguments\": [\n                { \"position\": 0, \"value\": \"{{control_id}}\" },\n                { \"position\": 1, \"value\": \"AQ==\" }\n            ]\n        }\n    ]\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": { "raw": "{{krpc_host}}" },
+            "description": "Enables/disables RCS. `AQ==`=true (enable), `AA==`=false (disable)."
+          }
+        },
+        {
+          "name": "Get Gear",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"calls\": [\n        {\n            \"service\": \"SpaceCenter\",\n            \"procedure\": \"Control_get_Gear\",\n            \"arguments\": [\n                { \"position\": 0, \"value\": \"{{control_id}}\" }\n            ]\n        }\n    ]\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": { "raw": "{{krpc_host}}" },
+            "description": "Returns the current landing gear state (bool)."
+          }
+        },
+        {
+          "name": "Set Gear",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"calls\": [\n        {\n            \"service\": \"SpaceCenter\",\n            \"procedure\": \"Control_set_Gear\",\n            \"arguments\": [\n                { \"position\": 0, \"value\": \"{{control_id}}\" },\n                { \"position\": 1, \"value\": \"AQ==\" }\n            ]\n        }\n    ]\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": { "raw": "{{krpc_host}}" },
+            "description": "Deploys (`AQ==`) or retracts (`AA==`) landing gear."
+          }
+        },
+        {
+          "name": "Activate Next Stage",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"calls\": [\n        {\n            \"service\": \"SpaceCenter\",\n            \"procedure\": \"Control_ActivateNextStage\",\n            \"arguments\": [\n                { \"position\": 0, \"value\": \"{{control_id}}\" }\n            ]\n        }\n    ]\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": { "raw": "{{krpc_host}}" },
+            "description": "Activates the next stage. Returns a list of vessel handles for any new vessels created by staging (e.g., dropped boosters)."
+          }
+        }
+      ]
+    },
+    {
+      "name": "SpaceCenter / AutoPilot",
+      "description": "Stock autopilot (SAS extended) — point vessel at a target pitch/heading/roll. Requires {{autopilot_id}}.",
+      "item": [
+        {
+          "name": "Get AutoPilot",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"calls\": [\n        {\n            \"service\": \"SpaceCenter\",\n            \"procedure\": \"Vessel_get_AutoPilot\",\n            \"arguments\": [\n                { \"position\": 0, \"value\": \"{{vessel_id}}\" }\n            ]\n        }\n    ]\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": { "raw": "{{krpc_host}}" },
+            "description": "Returns the AutoPilot object handle. Stored in {{autopilot_id}}."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "eval(pm.collectionVariables.get('_h'));",
+                  "const res = pm.response.json();",
+                  "if (res.results[0] && !res.results[0].error) {",
+                  "    pm.collectionVariables.set('autopilot_id', res.results[0].value);",
+                  "    console.log('autopilot_id set:', res.results[0].value);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Engage",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"calls\": [\n        {\n            \"service\": \"SpaceCenter\",\n            \"procedure\": \"AutoPilot_Engage\",\n            \"arguments\": [\n                { \"position\": 0, \"value\": \"{{autopilot_id}}\" }\n            ]\n        }\n    ]\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": { "raw": "{{krpc_host}}" },
+            "description": "Engages the autopilot to hold the target pitch/heading/roll."
+          }
+        },
+        {
+          "name": "Disengage",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"calls\": [\n        {\n            \"service\": \"SpaceCenter\",\n            \"procedure\": \"AutoPilot_Disengage\",\n            \"arguments\": [\n                { \"position\": 0, \"value\": \"{{autopilot_id}}\" }\n            ]\n        }\n    ]\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": { "raw": "{{krpc_host}}" },
+            "description": "Disengages the autopilot."
+          }
+        },
+        {
+          "name": "Set Target Pitch",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"calls\": [\n        {\n            \"service\": \"SpaceCenter\",\n            \"procedure\": \"AutoPilot_set_TargetPitch\",\n            \"arguments\": [\n                { \"position\": 0, \"value\": \"{{autopilot_id}}\" },\n                { \"position\": 1, \"value\": \"AADIQg==\" }\n            ]\n        }\n    ]\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": { "raw": "{{krpc_host}}" },
+            "description": "Sets the target pitch in degrees (float). `AADIQg==` = 90° (straight up). Use `kRPC_encodeFloat(degrees)` in pre-request script to compute other values."
+          }
+        },
+        {
+          "name": "Get Target Pitch",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"calls\": [\n        {\n            \"service\": \"SpaceCenter\",\n            \"procedure\": \"AutoPilot_get_TargetPitch\",\n            \"arguments\": [\n                { \"position\": 0, \"value\": \"{{autopilot_id}}\" }\n            ]\n        }\n    ]\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": { "raw": "{{krpc_host}}" },
+            "description": "Returns the current target pitch setting in degrees (float)."
+          }
+        },
+        {
+          "name": "Set Target Heading",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"calls\": [\n        {\n            \"service\": \"SpaceCenter\",\n            \"procedure\": \"AutoPilot_set_TargetHeading\",\n            \"arguments\": [\n                { \"position\": 0, \"value\": \"{{autopilot_id}}\" },\n                { \"position\": 1, \"value\": \"AAAAAA==\" }\n            ]\n        }\n    ]\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": { "raw": "{{krpc_host}}" },
+            "description": "Sets the target heading in degrees (0–360 float). `AAAAAA==` = 0° (North)."
+          }
+        },
+        {
+          "name": "Set Target Roll",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"calls\": [\n        {\n            \"service\": \"SpaceCenter\",\n            \"procedure\": \"AutoPilot_set_TargetRoll\",\n            \"arguments\": [\n                { \"position\": 0, \"value\": \"{{autopilot_id}}\" },\n                { \"position\": 1, \"value\": \"AAAAAA==\" }\n            ]\n        }\n    ]\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": { "raw": "{{krpc_host}}" },
+            "description": "Sets the target roll angle in degrees (float). `AAAAAA==` = 0°."
+          }
+        },
+        {
+          "name": "Get Error",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"calls\": [\n        {\n            \"service\": \"SpaceCenter\",\n            \"procedure\": \"AutoPilot_get_Error\",\n            \"arguments\": [\n                { \"position\": 0, \"value\": \"{{autopilot_id}}\" }\n            ]\n        }\n    ]\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": { "raw": "{{krpc_host}}" },
+            "description": "Returns the angle error between current and target orientation in degrees (float). Useful to check if autopilot has locked on."
+          }
+        }
+      ]
+    },
+    {
+      "name": "SpaceCenter / Flight",
+      "description": "Flight telemetry — altitude, position, velocity, attitude. Requires {{flight_id}}. Run Get Surface Reference Frame then Get Flight first.",
+      "item": [
+        {
+          "name": "Get Flight",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"calls\": [\n        {\n            \"service\": \"SpaceCenter\",\n            \"procedure\": \"Vessel_get_Flight\",\n            \"arguments\": [\n                { \"position\": 0, \"value\": \"{{vessel_id}}\" },\n                { \"position\": 1, \"value\": \"{{surface_ref_id}}\" }\n            ]\n        }\n    ]\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": { "raw": "{{krpc_host}}" },
+            "description": "Returns a Flight object relative to the surface reference frame. Stored in {{flight_id}}. Requires {{surface_ref_id}} from Get Surface Reference Frame."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "eval(pm.collectionVariables.get('_h'));",
+                  "const res = pm.response.json();",
+                  "if (res.results[0] && !res.results[0].error) {",
+                  "    pm.collectionVariables.set('flight_id', res.results[0].value);",
+                  "    console.log('flight_id set:', res.results[0].value);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get Altitude",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"calls\": [\n        {\n            \"service\": \"SpaceCenter\",\n            \"procedure\": \"Flight_get_Altitude\",\n            \"arguments\": [\n                { \"position\": 0, \"value\": \"{{flight_id}}\" }\n            ]\n        }\n    ]\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": { "raw": "{{krpc_host}}" },
+            "description": "Returns altitude above sea level in meters (double)."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "eval(pm.collectionVariables.get('_h'));",
+                  "const res = pm.response.json();",
+                  "if (res.results[0] && !res.results[0].error)",
+                  "    console.log('Altitude (m):', kRPC_decodeDouble(res.results[0].value));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get Mean Altitude",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"calls\": [\n        {\n            \"service\": \"SpaceCenter\",\n            \"procedure\": \"Flight_get_MeanAltitude\",\n            \"arguments\": [\n                { \"position\": 0, \"value\": \"{{flight_id}}\" }\n            ]\n        }\n    ]\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": { "raw": "{{krpc_host}}" },
+            "description": "Returns mean altitude above sea level in meters (double)."
+          }
+        },
+        {
+          "name": "Get Surface Altitude",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"calls\": [\n        {\n            \"service\": \"SpaceCenter\",\n            \"procedure\": \"Flight_get_SurfaceAltitude\",\n            \"arguments\": [\n                { \"position\": 0, \"value\": \"{{flight_id}}\" }\n            ]\n        }\n    ]\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": { "raw": "{{krpc_host}}" },
+            "description": "Returns altitude above the ground surface in meters (double). More useful for landing than sea-level altitude."
+          }
+        },
+        {
+          "name": "Get Latitude",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"calls\": [\n        {\n            \"service\": \"SpaceCenter\",\n            \"procedure\": \"Flight_get_Latitude\",\n            \"arguments\": [\n                { \"position\": 0, \"value\": \"{{flight_id}}\" }\n            ]\n        }\n    ]\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": { "raw": "{{krpc_host}}" },
+            "description": "Returns the vessel latitude in degrees (double)."
+          }
+        },
+        {
+          "name": "Get Longitude",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"calls\": [\n        {\n            \"service\": \"SpaceCenter\",\n            \"procedure\": \"Flight_get_Longitude\",\n            \"arguments\": [\n                { \"position\": 0, \"value\": \"{{flight_id}}\" }\n            ]\n        }\n    ]\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": { "raw": "{{krpc_host}}" },
+            "description": "Returns the vessel longitude in degrees (double)."
+          }
+        },
+        {
+          "name": "Get Speed",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"calls\": [\n        {\n            \"service\": \"SpaceCenter\",\n            \"procedure\": \"Flight_get_Speed\",\n            \"arguments\": [\n                { \"position\": 0, \"value\": \"{{flight_id}}\" }\n            ]\n        }\n    ]\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": { "raw": "{{krpc_host}}" },
+            "description": "Returns speed in m/s relative to the reference frame (double)."
+          }
+        },
+        {
+          "name": "Get Vertical Speed",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"calls\": [\n        {\n            \"service\": \"SpaceCenter\",\n            \"procedure\": \"Flight_get_VerticalSpeed\",\n            \"arguments\": [\n                { \"position\": 0, \"value\": \"{{flight_id}}\" }\n            ]\n        }\n    ]\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": { "raw": "{{krpc_host}}" },
+            "description": "Returns vertical speed in m/s (double). Positive = ascending."
+          }
+        },
+        {
+          "name": "Get Heading",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"calls\": [\n        {\n            \"service\": \"SpaceCenter\",\n            \"procedure\": \"Flight_get_Heading\",\n            \"arguments\": [\n                { \"position\": 0, \"value\": \"{{flight_id}}\" }\n            ]\n        }\n    ]\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": { "raw": "{{krpc_host}}" },
+            "description": "Returns compass heading in degrees 0–360 (float)."
+          }
+        },
+        {
+          "name": "Get Pitch",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"calls\": [\n        {\n            \"service\": \"SpaceCenter\",\n            \"procedure\": \"Flight_get_Pitch\",\n            \"arguments\": [\n                { \"position\": 0, \"value\": \"{{flight_id}}\" }\n            ]\n        }\n    ]\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": { "raw": "{{krpc_host}}" },
+            "description": "Returns pitch angle in degrees −90 to 90 (float)."
+          }
+        },
+        {
+          "name": "Get Roll",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"calls\": [\n        {\n            \"service\": \"SpaceCenter\",\n            \"procedure\": \"Flight_get_Roll\",\n            \"arguments\": [\n                { \"position\": 0, \"value\": \"{{flight_id}}\" }\n            ]\n        }\n    ]\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": { "raw": "{{krpc_host}}" },
+            "description": "Returns roll angle in degrees −180 to 180 (float)."
+          }
+        },
+        {
+          "name": "Get G Force",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"calls\": [\n        {\n            \"service\": \"SpaceCenter\",\n            \"procedure\": \"Flight_get_GForce\",\n            \"arguments\": [\n                { \"position\": 0, \"value\": \"{{flight_id}}\" }\n            ]\n        }\n    ]\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": { "raw": "{{krpc_host}}" },
+            "description": "Returns experienced g-force (float)."
+          }
+        }
+      ]
+    },
+    {
+      "name": "SpaceCenter / Orbit",
+      "description": "Orbital parameters. Requires {{orbit_id}} — run Get Orbit first.",
+      "item": [
+        {
+          "name": "Get Orbit",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"calls\": [\n        {\n            \"service\": \"SpaceCenter\",\n            \"procedure\": \"Vessel_get_Orbit\",\n            \"arguments\": [\n                { \"position\": 0, \"value\": \"{{vessel_id}}\" }\n            ]\n        }\n    ]\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": { "raw": "{{krpc_host}}" },
+            "description": "Returns the Orbit object handle. Stored in {{orbit_id}}."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "eval(pm.collectionVariables.get('_h'));",
+                  "const res = pm.response.json();",
+                  "if (res.results[0] && !res.results[0].error) {",
+                  "    pm.collectionVariables.set('orbit_id', res.results[0].value);",
+                  "    console.log('orbit_id set:', res.results[0].value);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get Apoapsis Altitude",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"calls\": [\n        {\n            \"service\": \"SpaceCenter\",\n            \"procedure\": \"Orbit_get_ApoapsisAltitude\",\n            \"arguments\": [\n                { \"position\": 0, \"value\": \"{{orbit_id}}\" }\n            ]\n        }\n    ]\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": { "raw": "{{krpc_host}}" },
+            "description": "Returns apoapsis altitude above body surface in meters (double)."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "eval(pm.collectionVariables.get('_h'));",
+                  "const res = pm.response.json();",
+                  "if (res.results[0] && !res.results[0].error)",
+                  "    console.log('Apoapsis Alt (m):', kRPC_decodeDouble(res.results[0].value));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get Periapsis Altitude",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"calls\": [\n        {\n            \"service\": \"SpaceCenter\",\n            \"procedure\": \"Orbit_get_PeriapsisAltitude\",\n            \"arguments\": [\n                { \"position\": 0, \"value\": \"{{orbit_id}}\" }\n            ]\n        }\n    ]\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": { "raw": "{{krpc_host}}" },
+            "description": "Returns periapsis altitude above body surface in meters (double)."
+          }
+        },
+        {
+          "name": "Get Eccentricity",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"calls\": [\n        {\n            \"service\": \"SpaceCenter\",\n            \"procedure\": \"Orbit_get_Eccentricity\",\n            \"arguments\": [\n                { \"position\": 0, \"value\": \"{{orbit_id}}\" }\n            ]\n        }\n    ]\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": { "raw": "{{krpc_host}}" },
+            "description": "Returns orbital eccentricity (double). 0 = circular, <1 = elliptical, ≥1 = escape trajectory."
+          }
+        },
+        {
+          "name": "Get Inclination",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"calls\": [\n        {\n            \"service\": \"SpaceCenter\",\n            \"procedure\": \"Orbit_get_Inclination\",\n            \"arguments\": [\n                { \"position\": 0, \"value\": \"{{orbit_id}}\" }\n            ]\n        }\n    ]\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": { "raw": "{{krpc_host}}" },
+            "description": "Returns orbital inclination in degrees (double)."
+          }
+        },
+        {
+          "name": "Get Period",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"calls\": [\n        {\n            \"service\": \"SpaceCenter\",\n            \"procedure\": \"Orbit_get_Period\",\n            \"arguments\": [\n                { \"position\": 0, \"value\": \"{{orbit_id}}\" }\n            ]\n        }\n    ]\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": { "raw": "{{krpc_host}}" },
+            "description": "Returns orbital period in seconds (double)."
+          }
+        },
+        {
+          "name": "Get Time to Apoapsis",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"calls\": [\n        {\n            \"service\": \"SpaceCenter\",\n            \"procedure\": \"Orbit_get_TimeToApoapsis\",\n            \"arguments\": [\n                { \"position\": 0, \"value\": \"{{orbit_id}}\" }\n            ]\n        }\n    ]\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": { "raw": "{{krpc_host}}" },
+            "description": "Returns time to apoapsis in seconds (double)."
+          }
+        },
+        {
+          "name": "Get Time to Periapsis",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"calls\": [\n        {\n            \"service\": \"SpaceCenter\",\n            \"procedure\": \"Orbit_get_TimeToPeriapsis\",\n            \"arguments\": [\n                { \"position\": 0, \"value\": \"{{orbit_id}}\" }\n            ]\n        }\n    ]\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": { "raw": "{{krpc_host}}" },
+            "description": "Returns time to periapsis in seconds (double)."
+          }
+        },
+        {
+          "name": "Get Semi-Major Axis",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"calls\": [\n        {\n            \"service\": \"SpaceCenter\",\n            \"procedure\": \"Orbit_get_SemiMajorAxis\",\n            \"arguments\": [\n                { \"position\": 0, \"value\": \"{{orbit_id}}\" }\n            ]\n        }\n    ]\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": { "raw": "{{krpc_host}}" },
+            "description": "Returns semi-major axis in meters (double)."
+          }
+        },
+        {
+          "name": "Get Orbital Speed",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"calls\": [\n        {\n            \"service\": \"SpaceCenter\",\n            \"procedure\": \"Orbit_get_OrbitalSpeed\",\n            \"arguments\": [\n                { \"position\": 0, \"value\": \"{{orbit_id}}\" }\n            ]\n        }\n    ]\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": { "raw": "{{krpc_host}}" },
+            "description": "Returns current orbital speed in m/s (double)."
+          }
+        }
+      ]
+    },
+    {
+      "name": "SpaceCenter / Resources",
+      "description": "Fuel and resource monitoring. Requires {{resources_id}} — run Get Resources first.",
+      "item": [
+        {
+          "name": "Get Resources",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"calls\": [\n        {\n            \"service\": \"SpaceCenter\",\n            \"procedure\": \"Vessel_get_Resources\",\n            \"arguments\": [\n                { \"position\": 0, \"value\": \"{{vessel_id}}\" }\n            ]\n        }\n    ]\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": { "raw": "{{krpc_host}}" },
+            "description": "Returns the Resources object handle for the vessel. Stored in {{resources_id}}."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "eval(pm.collectionVariables.get('_h'));",
+                  "const res = pm.response.json();",
+                  "if (res.results[0] && !res.results[0].error) {",
+                  "    pm.collectionVariables.set('resources_id', res.results[0].value);",
+                  "    console.log('resources_id set:', res.results[0].value);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get Resource Names",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"calls\": [\n        {\n            \"service\": \"SpaceCenter\",\n            \"procedure\": \"Resources_get_Names\",\n            \"arguments\": [\n                { \"position\": 0, \"value\": \"{{resources_id}}\" }\n            ]\n        }\n    ]\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": { "raw": "{{krpc_host}}" },
+            "description": "Returns the names of all available resources (list of strings)."
+          }
+        },
+        {
+          "name": "Get Resource Amount - LiquidFuel",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"calls\": [\n        {\n            \"service\": \"SpaceCenter\",\n            \"procedure\": \"Resources_Amount\",\n            \"arguments\": [\n                { \"position\": 0, \"value\": \"{{resources_id}}\" },\n                { \"position\": 1, \"value\": \"DExpcXVpZEZ1ZWw=\" }\n            ]\n        }\n    ]\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": { "raw": "{{krpc_host}}" },
+            "description": "Returns current LiquidFuel amount (float). Argument 1 = `kRPC_encodeString('LiquidFuel')`. Use Get Resource Names to find the exact name for your vessel."
+          }
+        },
+        {
+          "name": "Get Resource Max - LiquidFuel",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"calls\": [\n        {\n            \"service\": \"SpaceCenter\",\n            \"procedure\": \"Resources_Max\",\n            \"arguments\": [\n                { \"position\": 0, \"value\": \"{{resources_id}}\" },\n                { \"position\": 1, \"value\": \"DExpcXVpZEZ1ZWw=\" }\n            ]\n        }\n    ]\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": { "raw": "{{krpc_host}}" },
+            "description": "Returns maximum LiquidFuel capacity (float). Argument 1 = `kRPC_encodeString('LiquidFuel')`."
+          }
+        },
+        {
+          "name": "Get Resource Amount - Oxidizer",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"calls\": [\n        {\n            \"service\": \"SpaceCenter\",\n            \"procedure\": \"Resources_Amount\",\n            \"arguments\": [\n                { \"position\": 0, \"value\": \"{{resources_id}}\" },\n                { \"position\": 1, \"value\": \"CE94aWRpemVy\" }\n            ]\n        }\n    ]\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": { "raw": "{{krpc_host}}" },
+            "description": "Returns current Oxidizer amount (float). Argument 1 = `kRPC_encodeString('Oxidizer')`."
+          }
+        },
+        {
+          "name": "Get Resource Amount - MonoPropellant",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"calls\": [\n        {\n            \"service\": \"SpaceCenter\",\n            \"procedure\": \"Resources_Amount\",\n            \"arguments\": [\n                { \"position\": 0, \"value\": \"{{resources_id}}\" },\n                { \"position\": 1, \"value\": \"Dk1vbm9Qcm9wZWxsYW50\" }\n            ]\n        }\n    ]\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": { "raw": "{{krpc_host}}" },
+            "description": "Returns current MonoPropellant amount (float). Argument 1 = `kRPC_encodeString('MonoPropellant')`."
+          }
+        }
+      ]
+    },
+    {
+      "name": "MechJeb / Setup",
+      "description": "Get MechJeb controller object handles from the vessel. These must be run before the corresponding MechJeb sub-folder requests. Requires the KRPC.MechJeb addon by Genhis.",
+      "item": [
+        {
+          "name": "Get SmartASS",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"calls\": [\n        {\n            \"service\": \"MechJeb\",\n            \"procedure\": \"get_SmartASS\",\n            \"arguments\": [\n                { \"position\": 0, \"value\": \"{{vessel_id}}\" }\n            ]\n        }\n    ]\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": { "raw": "{{krpc_host}}" },
+            "description": "Returns the SmartASS controller handle for the vessel. Stored in {{mj_smartass_id}}."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "eval(pm.collectionVariables.get('_h'));",
+                  "const res = pm.response.json();",
+                  "if (res.results[0] && !res.results[0].error) {",
+                  "    pm.collectionVariables.set('mj_smartass_id', res.results[0].value);",
+                  "    console.log('mj_smartass_id set:', res.results[0].value);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get Ascent Autopilot",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"calls\": [\n        {\n            \"service\": \"MechJeb\",\n            \"procedure\": \"get_AscentAutopilot\",\n            \"arguments\": [\n                { \"position\": 0, \"value\": \"{{vessel_id}}\" }\n            ]\n        }\n    ]\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": { "raw": "{{krpc_host}}" },
+            "description": "Returns the AscentAutopilot controller handle. Stored in {{mj_ascent_id}}."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "eval(pm.collectionVariables.get('_h'));",
+                  "const res = pm.response.json();",
+                  "if (res.results[0] && !res.results[0].error) {",
+                  "    pm.collectionVariables.set('mj_ascent_id', res.results[0].value);",
+                  "    console.log('mj_ascent_id set:', res.results[0].value);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get Landing Autopilot",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"calls\": [\n        {\n            \"service\": \"MechJeb\",\n            \"procedure\": \"get_LandingAutopilot\",\n            \"arguments\": [\n                { \"position\": 0, \"value\": \"{{vessel_id}}\" }\n            ]\n        }\n    ]\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": { "raw": "{{krpc_host}}" },
+            "description": "Returns the LandingAutopilot controller handle. Stored in {{mj_landing_id}}."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "eval(pm.collectionVariables.get('_h'));",
+                  "const res = pm.response.json();",
+                  "if (res.results[0] && !res.results[0].error) {",
+                  "    pm.collectionVariables.set('mj_landing_id', res.results[0].value);",
+                  "    console.log('mj_landing_id set:', res.results[0].value);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get Node Executor",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"calls\": [\n        {\n            \"service\": \"MechJeb\",\n            \"procedure\": \"get_NodeExecutor\",\n            \"arguments\": [\n                { \"position\": 0, \"value\": \"{{vessel_id}}\" }\n            ]\n        }\n    ]\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": { "raw": "{{krpc_host}}" },
+            "description": "Returns the NodeExecutor controller handle. Stored in {{mj_node_executor_id}}."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "eval(pm.collectionVariables.get('_h'));",
+                  "const res = pm.response.json();",
+                  "if (res.results[0] && !res.results[0].error) {",
+                  "    pm.collectionVariables.set('mj_node_executor_id', res.results[0].value);",
+                  "    console.log('mj_node_executor_id set:', res.results[0].value);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get Maneuver Planner",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"calls\": [\n        {\n            \"service\": \"MechJeb\",\n            \"procedure\": \"get_ManeuverPlanner\",\n            \"arguments\": [\n                { \"position\": 0, \"value\": \"{{vessel_id}}\" }\n            ]\n        }\n    ]\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": { "raw": "{{krpc_host}}" },
+            "description": "Returns the ManeuverPlanner controller handle. Stored in {{mj_maneuver_planner_id}}."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "eval(pm.collectionVariables.get('_h'));",
+                  "const res = pm.response.json();",
+                  "if (res.results[0] && !res.results[0].error) {",
+                  "    pm.collectionVariables.set('mj_maneuver_planner_id', res.results[0].value);",
+                  "    console.log('mj_maneuver_planner_id set:', res.results[0].value);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get Rendezvous Autopilot",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"calls\": [\n        {\n            \"service\": \"MechJeb\",\n            \"procedure\": \"get_RendezvousAutopilot\",\n            \"arguments\": [\n                { \"position\": 0, \"value\": \"{{vessel_id}}\" }\n            ]\n        }\n    ]\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": { "raw": "{{krpc_host}}" },
+            "description": "Returns the RendezvousAutopilot controller handle. Stored in {{mj_rendezvous_id}}."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "eval(pm.collectionVariables.get('_h'));",
+                  "const res = pm.response.json();",
+                  "if (res.results[0] && !res.results[0].error) {",
+                  "    pm.collectionVariables.set('mj_rendezvous_id', res.results[0].value);",
+                  "    console.log('mj_rendezvous_id set:', res.results[0].value);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "MechJeb / SmartASS",
+      "description": "SmartASS attitude control system. Requires {{mj_smartass_id}} from MechJeb / Setup / Get SmartASS.\n\nSmartASSInterfaceMode enum: Orbital=0, Surface=1, Target=2, Advanced=3, Automatic=4\nSmartASSAutopilotMode enum: Off=0, KillRot=1, Node=2, Surface=3, Prograde=4, Retrograde=5, NormalPlus=6, NormalMinus=7, RadialPlus=8, RadialMinus=9, RelativePlus=10, RelativeMinus=11, TargetPlus=12, TargetMinus=13, ParallelPlus=14, ParallelMinus=15, Advanced=16, Automatic=17, SurfacePrograde=18, SurfaceRetrograde=19, HorizontalPlus=20, HorizontalMinus=21, VerticalPlus=22",
+      "item": [
+        {
+          "name": "Get Interface Mode",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"calls\": [\n        {\n            \"service\": \"MechJeb\",\n            \"procedure\": \"SmartASS_get_InterfaceMode\",\n            \"arguments\": [\n                { \"position\": 0, \"value\": \"{{mj_smartass_id}}\" }\n            ]\n        }\n    ]\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": { "raw": "{{krpc_host}}" },
+            "description": "Returns the current SmartASS interface mode (SmartASSInterfaceMode enum as varint)."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "eval(pm.collectionVariables.get('_h'));",
+                  "const modes = ['Orbital','Surface','Target','Advanced','Automatic'];",
+                  "const res = pm.response.json();",
+                  "if (res.results[0] && !res.results[0].error) {",
+                  "    const v = kRPC_decodeInt32(res.results[0].value);",
+                  "    console.log('InterfaceMode:', modes[v] || v);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get Autopilot Mode",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"calls\": [\n        {\n            \"service\": \"MechJeb\",\n            \"procedure\": \"SmartASS_get_AutopilotMode\",\n            \"arguments\": [\n                { \"position\": 0, \"value\": \"{{mj_smartass_id}}\" }\n            ]\n        }\n    ]\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": { "raw": "{{krpc_host}}" },
+            "description": "Returns the current SmartASS autopilot mode (SmartASSAutopilotMode enum as varint)."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "eval(pm.collectionVariables.get('_h'));",
+                  "const modes = ['Off','KillRot','Node','Surface','Prograde','Retrograde','NormalPlus','NormalMinus','RadialPlus','RadialMinus','RelativePlus','RelativeMinus','TargetPlus','TargetMinus','ParallelPlus','ParallelMinus','Advanced','Automatic','SurfacePrograde','SurfaceRetrograde','HorizontalPlus','HorizontalMinus','VerticalPlus'];",
+                  "const res = pm.response.json();",
+                  "if (res.results[0] && !res.results[0].error) {",
+                  "    const v = kRPC_decodeInt32(res.results[0].value);",
+                  "    console.log('AutopilotMode:', modes[v] || v);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Set Mode - Off",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"calls\": [\n        {\n            \"service\": \"MechJeb\",\n            \"procedure\": \"SmartASS_set_AutopilotMode\",\n            \"arguments\": [\n                { \"position\": 0, \"value\": \"{{mj_smartass_id}}\" },\n                { \"position\": 1, \"value\": \"AA==\" }\n            ]\n        }\n    ]\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": { "raw": "{{krpc_host}}" },
+            "description": "Turns SmartASS off (mode 0 = Off). After changing mode, call SmartASS Update to apply."
+          }
+        },
+        {
+          "name": "Set Mode - Kill Rotation",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"calls\": [\n        {\n            \"service\": \"MechJeb\",\n            \"procedure\": \"SmartASS_set_AutopilotMode\",\n            \"arguments\": [\n                { \"position\": 0, \"value\": \"{{mj_smartass_id}}\" },\n                { \"position\": 1, \"value\": \"AQ==\" }\n            ]\n        }\n    ]\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": { "raw": "{{krpc_host}}" },
+            "description": "Sets SmartASS to Kill Rotation mode (1). Stops all rotation."
+          }
+        },
+        {
+          "name": "Set Mode - Node",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"calls\": [\n        {\n            \"service\": \"MechJeb\",\n            \"procedure\": \"SmartASS_set_AutopilotMode\",\n            \"arguments\": [\n                { \"position\": 0, \"value\": \"{{mj_smartass_id}}\" },\n                { \"position\": 1, \"value\": \"Ag==\" }\n            ]\n        }\n    ]\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": { "raw": "{{krpc_host}}" },
+            "description": "Points toward the next maneuver node (mode 2)."
+          }
+        },
+        {
+          "name": "Set Mode - Prograde",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"calls\": [\n        {\n            \"service\": \"MechJeb\",\n            \"procedure\": \"SmartASS_set_AutopilotMode\",\n            \"arguments\": [\n                { \"position\": 0, \"value\": \"{{mj_smartass_id}}\" },\n                { \"position\": 1, \"value\": \"BA==\" }\n            ]\n        }\n    ]\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": { "raw": "{{krpc_host}}" },
+            "description": "Points prograde (mode 4). Interface mode should be set to Orbital (0) first."
+          }
+        },
+        {
+          "name": "Set Mode - Retrograde",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"calls\": [\n        {\n            \"service\": \"MechJeb\",\n            \"procedure\": \"SmartASS_set_AutopilotMode\",\n            \"arguments\": [\n                { \"position\": 0, \"value\": \"{{mj_smartass_id}}\" },\n                { \"position\": 1, \"value\": \"BQ==\" }\n            ]\n        }\n    ]\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": { "raw": "{{krpc_host}}" },
+            "description": "Points retrograde (mode 5). Useful for deorbit burns."
+          }
+        },
+        {
+          "name": "Set Interface Mode - Orbital",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"calls\": [\n        {\n            \"service\": \"MechJeb\",\n            \"procedure\": \"SmartASS_set_InterfaceMode\",\n            \"arguments\": [\n                { \"position\": 0, \"value\": \"{{mj_smartass_id}}\" },\n                { \"position\": 1, \"value\": \"AA==\" }\n            ]\n        }\n    ]\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": { "raw": "{{krpc_host}}" },
+            "description": "Sets the SmartASS interface mode to Orbital (0). Required before using orbital reference autopilot modes."
+          }
+        },
+        {
+          "name": "Update",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"calls\": [\n        {\n            \"service\": \"MechJeb\",\n            \"procedure\": \"SmartASS_Update\",\n            \"arguments\": [\n                { \"position\": 0, \"value\": \"{{mj_smartass_id}}\" },\n                { \"position\": 1, \"value\": \"AQ==\" }\n            ]\n        }\n    ]\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": { "raw": "{{krpc_host}}" },
+            "description": "Applies pending SmartASS mode changes. Argument 1 (resetPID bool): `AQ==`=true resets PID controllers, `AA==`=false preserves them."
+          }
+        }
+      ]
+    },
+    {
+      "name": "MechJeb / Ascent Autopilot",
+      "description": "Automated launch to orbit. Requires {{mj_ascent_id}} from MechJeb / Setup / Get Ascent Autopilot.",
+      "item": [
+        {
+          "name": "Get Enabled",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"calls\": [\n        {\n            \"service\": \"MechJeb\",\n            \"procedure\": \"AscentAutopilot_get_Enabled\",\n            \"arguments\": [\n                { \"position\": 0, \"value\": \"{{mj_ascent_id}}\" }\n            ]\n        }\n    ]\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": { "raw": "{{krpc_host}}" },
+            "description": "Returns whether the Ascent Autopilot is currently engaged (bool)."
+          }
+        },
+        {
+          "name": "Set Enabled (Engage)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"calls\": [\n        {\n            \"service\": \"MechJeb\",\n            \"procedure\": \"AscentAutopilot_set_Enabled\",\n            \"arguments\": [\n                { \"position\": 0, \"value\": \"{{mj_ascent_id}}\" },\n                { \"position\": 1, \"value\": \"AQ==\" }\n            ]\n        }\n    ]\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": { "raw": "{{krpc_host}}" },
+            "description": "Engages or disengages the Ascent Autopilot. `AQ==`=engage, `AA==`=disengage. Set desired altitude and inclination before engaging."
+          }
+        },
+        {
+          "name": "Get Desired Orbit Altitude",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"calls\": [\n        {\n            \"service\": \"MechJeb\",\n            \"procedure\": \"AscentAutopilot_get_DesiredOrbitAltitude\",\n            \"arguments\": [\n                { \"position\": 0, \"value\": \"{{mj_ascent_id}}\" }\n            ]\n        }\n    ]\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": { "raw": "{{krpc_host}}" },
+            "description": "Returns the target orbit altitude in meters (double)."
+          }
+        },
+        {
+          "name": "Set Desired Orbit Altitude",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"calls\": [\n        {\n            \"service\": \"MechJeb\",\n            \"procedure\": \"AscentAutopilot_set_DesiredOrbitAltitude\",\n            \"arguments\": [\n                { \"position\": 0, \"value\": \"{{mj_ascent_id}}\" },\n                { \"position\": 1, \"value\": \"AADdlkdCAAA=\" }\n            ]\n        }\n    ]\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": { "raw": "{{krpc_host}}" },
+            "description": "Sets the target orbit altitude in meters (double). The example value encodes 80,000 m (80 km). Use `kRPC_encodeDouble(meters)` in a pre-request script to set custom altitudes."
+          }
+        },
+        {
+          "name": "Set Desired Inclination",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"calls\": [\n        {\n            \"service\": \"MechJeb\",\n            \"procedure\": \"AscentAutopilot_set_DesiredInclination\",\n            \"arguments\": [\n                { \"position\": 0, \"value\": \"{{mj_ascent_id}}\" },\n                { \"position\": 1, \"value\": \"AAAAAAAAAAA=\" }\n            ]\n        }\n    ]\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": { "raw": "{{krpc_host}}" },
+            "description": "Sets the target inclination in degrees (double). `AAAAAAAAAAA=` = 0° (equatorial). Use `kRPC_encodeDouble(degrees)` for other values."
+          }
+        }
+      ]
+    },
+    {
+      "name": "MechJeb / Landing Autopilot",
+      "description": "Automated deorbit and landing. Requires {{mj_landing_id}} from MechJeb / Setup / Get Landing Autopilot.",
+      "item": [
+        {
+          "name": "Get Enabled",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"calls\": [\n        {\n            \"service\": \"MechJeb\",\n            \"procedure\": \"LandingAutopilot_get_Enabled\",\n            \"arguments\": [\n                { \"position\": 0, \"value\": \"{{mj_landing_id}}\" }\n            ]\n        }\n    ]\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": { "raw": "{{krpc_host}}" },
+            "description": "Returns whether the Landing Autopilot is currently engaged (bool)."
+          }
+        },
+        {
+          "name": "Land Untargeted",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"calls\": [\n        {\n            \"service\": \"MechJeb\",\n            \"procedure\": \"LandingAutopilot_LandUntargeted\",\n            \"arguments\": [\n                { \"position\": 0, \"value\": \"{{mj_landing_id}}\" }\n            ]\n        }\n    ]\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": { "raw": "{{krpc_host}}" },
+            "description": "Begins an untargeted landing — deorbits and lands wherever the trajectory leads."
+          }
+        },
+        {
+          "name": "Land at Position Target",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"calls\": [\n        {\n            \"service\": \"MechJeb\",\n            \"procedure\": \"LandingAutopilot_LandAtPositionTarget\",\n            \"arguments\": [\n                { \"position\": 0, \"value\": \"{{mj_landing_id}}\" }\n            ]\n        }\n    ]\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": { "raw": "{{krpc_host}}" },
+            "description": "Begins a precision landing at the position target set in KSP (target marker on map). Requires a target to be set."
+          }
+        },
+        {
+          "name": "Stop Landing",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"calls\": [\n        {\n            \"service\": \"MechJeb\",\n            \"procedure\": \"LandingAutopilot_StopLanding\",\n            \"arguments\": [\n                { \"position\": 0, \"value\": \"{{mj_landing_id}}\" }\n            ]\n        }\n    ]\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": { "raw": "{{krpc_host}}" },
+            "description": "Aborts the landing autopilot."
+          }
+        }
+      ]
+    },
+    {
+      "name": "MechJeb / Node Executor",
+      "description": "Execute maneuver nodes. Requires {{mj_node_executor_id}} from MechJeb / Setup / Get Node Executor.",
+      "item": [
+        {
+          "name": "Get Enabled",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"calls\": [\n        {\n            \"service\": \"MechJeb\",\n            \"procedure\": \"NodeExecutor_get_Enabled\",\n            \"arguments\": [\n                { \"position\": 0, \"value\": \"{{mj_node_executor_id}}\" }\n            ]\n        }\n    ]\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": { "raw": "{{krpc_host}}" },
+            "description": "Returns whether the Node Executor is currently active (bool)."
+          }
+        },
+        {
+          "name": "Execute One Node",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"calls\": [\n        {\n            \"service\": \"MechJeb\",\n            \"procedure\": \"NodeExecutor_ExecuteOneNode\",\n            \"arguments\": [\n                { \"position\": 0, \"value\": \"{{mj_node_executor_id}}\" }\n            ]\n        }\n    ]\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": { "raw": "{{krpc_host}}" },
+            "description": "Executes the next maneuver node in the queue."
+          }
+        },
+        {
+          "name": "Execute All Nodes",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"calls\": [\n        {\n            \"service\": \"MechJeb\",\n            \"procedure\": \"NodeExecutor_ExecuteAllNodes\",\n            \"arguments\": [\n                { \"position\": 0, \"value\": \"{{mj_node_executor_id}}\" }\n            ]\n        }\n    ]\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": { "raw": "{{krpc_host}}" },
+            "description": "Executes all queued maneuver nodes in sequence."
+          }
+        },
+        {
+          "name": "Abort",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"calls\": [\n        {\n            \"service\": \"MechJeb\",\n            \"procedure\": \"NodeExecutor_Abort\",\n            \"arguments\": [\n                { \"position\": 0, \"value\": \"{{mj_node_executor_id}}\" }\n            ]\n        }\n    ]\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": { "raw": "{{krpc_host}}" },
+            "description": "Aborts the currently running node execution."
+          }
+        }
+      ]
+    },
+    {
+      "name": "MechJeb / Maneuver Planner",
+      "description": "Plan orbital maneuvers. Requires {{mj_maneuver_planner_id}} from MechJeb / Setup / Get Maneuver Planner.\n\nOperationApoapsis, OperationPeriapsis, OperationCircularize, OperationHohmann, etc. are separate controller types accessed via their own getter procedures.",
+      "item": [
+        {
+          "name": "Get Circularize at AP",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"calls\": [\n        {\n            \"service\": \"MechJeb\",\n            \"procedure\": \"ManeuverPlanner_get_OperationCircularize\",\n            \"arguments\": [\n                { \"position\": 0, \"value\": \"{{mj_maneuver_planner_id}}\" }\n            ]\n        }\n    ]\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": { "raw": "{{krpc_host}}" },
+            "description": "Returns the OperationCircularize controller. Use MakeNode on this object to create a circularization burn node."
+          }
+        },
+        {
+          "name": "Get Hohmann Transfer Operation",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"calls\": [\n        {\n            \"service\": \"MechJeb\",\n            \"procedure\": \"ManeuverPlanner_get_OperationHohmann\",\n            \"arguments\": [\n                { \"position\": 0, \"value\": \"{{mj_maneuver_planner_id}}\" }\n            ]\n        }\n    ]\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": { "raw": "{{krpc_host}}" },
+            "description": "Returns the OperationHohmann controller for Hohmann transfer planning."
+          }
+        },
+        {
+          "name": "Get Change Apoapsis Operation",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"calls\": [\n        {\n            \"service\": \"MechJeb\",\n            \"procedure\": \"ManeuverPlanner_get_OperationApoapsis\",\n            \"arguments\": [\n                { \"position\": 0, \"value\": \"{{mj_maneuver_planner_id}}\" }\n            ]\n        }\n    ]\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": { "raw": "{{krpc_host}}" },
+            "description": "Returns the OperationApoapsis controller for changing apoapsis altitude."
+          }
+        },
+        {
+          "name": "Get Change Periapsis Operation",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"calls\": [\n        {\n            \"service\": \"MechJeb\",\n            \"procedure\": \"ManeuverPlanner_get_OperationPeriapsis\",\n            \"arguments\": [\n                { \"position\": 0, \"value\": \"{{mj_maneuver_planner_id}}\" }\n            ]\n        }\n    ]\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": { "raw": "{{krpc_host}}" },
+            "description": "Returns the OperationPeriapsis controller for changing periapsis altitude."
+          }
+        }
+      ]
+    }
+  ]
+}
