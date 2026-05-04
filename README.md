@@ -19,6 +19,52 @@ KSP + kRPC mod  ←──gRPC──→  krpc-mcp server  ←──MCP──→  
 | Orbital mechanics | `get_orbit_info`, `add_maneuver_node`, `remove_all_maneuver_nodes`, `warp_to`, `get_universal_time` |
 | Resources | `get_resources`, `get_resource_amount` |
 
+### MechJeb integration
+
+When the [kRPC.MechJeb](https://github.com/Genhis/KRPC.MechJeb) mod is installed, all 19 MechJeb services are automatically exposed as MCP tools — no extra configuration needed.
+
+| Category | Exposed services |
+|---|---|
+| Autopilots | `AscentAutopilot` (+ Classic/GT/PVG profiles), `LandingAutopilot`, `DockingAutopilot`, `RendezvousAutopilot`, `AirplaneAutopilot` |
+| Attitude & execution | `SmartASS` (mode/reference frame + `Update()`), `Translatron`, `NodeExecutor` (`ExecuteOneNode/AllNodes/Abort`) |
+| Maneuver planning | `ManeuverPlanner` — all 16 operation types with `TimeSelector`; `MakeNodes()` + auto-execute path |
+| Controllers | `ThrustController`, `StagingController`, `RCSController`, `SmartRCS` |
+| Utilities | `TargetController`, `AntennaController`, `SolarPanelController` |
+
+**Safety guarantees:**
+- `MechJeb.APIReady` is checked before every MechJeb tool call. If the mod is not yet initialised the server returns a clear error instead of a cryptic RPC failure.
+- `OperationException` (e.g. "no target set", "invalid orbit") is caught and returned as a structured `MechJeb operation error:` message.
+
+**Example workflow — launch to 100 km orbit:**
+
+```
+# 1. Get the AscentAutopilot handle
+mech_jeb_get_ascent_autopilot → AscentAutopilot(id=42)
+
+# 2. Configure
+mech_jeb_ascent_autopilot_set_desired_orbit_altitude  this=42  value=100000
+mech_jeb_ascent_autopilot_set_desired_inclination     this=42  value=0
+
+# 3. Engage
+mech_jeb_ascent_autopilot_set_enabled  this=42  value=true
+```
+
+**Example workflow — circularize at apoapsis:**
+
+```
+# 1. Get ManeuverPlanner and circularize operation
+mech_jeb_get_maneuver_planner                         → ManeuverPlanner(id=10)
+mech_jeb_maneuver_planner_get_operation_circularize   this=10  → OperationCircularize(id=20)
+
+# 2. Create nodes
+mech_jeb_operation_circularize_make_nodes  this=20
+
+# 3. Execute
+mech_jeb_get_node_executor                            → NodeExecutor(id=30)
+mech_jeb_node_executor_set_autowarp  this=30  value=true
+mech_jeb_node_executor_execute_one_node  this=30
+```
+
 ## Requirements
 
 - Python 3.11+

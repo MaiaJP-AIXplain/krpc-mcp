@@ -10,11 +10,14 @@ import logging
 import re
 from typing import Any
 
+import krpc.error
 from mcp.server import Server
 from mcp.types import TextContent, Tool
 
 from .connection import get_connection
 from .type_mapper import SKIP_TYPE_CODES, format_result, params_to_input_schema, strip_xml
+
+MECHJEB_SERVICE = "MechJeb"
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +35,23 @@ def _to_snake(name: str) -> str:
 
 def _tool_name(service_name: str, proc_name: str) -> str:
     return f"{_to_snake(service_name)}_{_to_snake(proc_name)}"
+
+
+# ---------------------------------------------------------------------------
+# MechJeb readiness guard
+# ---------------------------------------------------------------------------
+
+def _check_mechjeb_ready(conn) -> str | None:
+    """Return an error string if MechJeb.APIReady is False, else None."""
+    try:
+        if not conn.mech_jeb.api_ready:
+            return (
+                "MechJeb.APIReady is false — MechJeb is not initialised. "
+                "Ensure the kRPC.MechJeb mod is installed and a vessel is active."
+            )
+    except AttributeError:
+        return "MechJeb service not found on this kRPC connection."
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -95,7 +115,8 @@ def _invoke(conn, service_name: str, proc_name: str, params: list, arguments: di
             raise ValueError("Missing required parameter 'this' (remote object ID)")
         proxy = _class_proxy(conn, service_name, class_name, int(instance_id))
         # Strip "{ClassName}_" prefix to get the bare procedure name
-        bare = proc_name[len(class_name) + 1:] if proc_name.startswith(f"{class_name}_") else proc_name
+        pfx = f"{class_name}_"
+        bare = proc_name[len(pfx):] if proc_name.startswith(pfx) else proc_name
         return _call_on(proxy, bare, params[1:], arguments)
 
     svc = _service_obj(conn, service_name)
@@ -148,7 +169,8 @@ class KrpcBridge:
                 self._registry[name] = (service.name, proc.name, params)
                 count += 1
 
-        logger.info("kRPC bridge: registered %d tools from %d services", count, len(services_proto.services))
+        n_services = len(services_proto.services)
+        logger.info("kRPC bridge: registered %d tools from %d services", count, n_services)
 
     @staticmethod
     def _is_exposable(proc) -> bool:
@@ -177,9 +199,21 @@ class KrpcBridge:
         if entry is None:
             return [TextContent(type="text", text=f"Unknown tool: {name!r}")]
         service_name, proc_name, params = entry
+
+        # Guard: verify MechJeb is initialised before any MechJeb call except APIReady itself.
+        if service_name == MECHJEB_SERVICE and proc_name != "get_APIReady":
+            err = _check_mechjeb_ready(self._conn)
+            if err:
+                return [TextContent(type="text", text=err)]
+
         try:
             result = _invoke(self._conn, service_name, proc_name, params, arguments or {})
             return [TextContent(type="text", text=format_result(result))]
+        except krpc.error.RPCError as exc:
+            msg = str(exc)
+            if "OperationException" in msg:
+                return [TextContent(type="text", text=f"MechJeb operation error: {msg}")]
+            return [TextContent(type="text", text=f"kRPC RPC error: {msg}")]
         except Exception as exc:
             logger.exception("Error invoking kRPC tool %s", name)
             return [TextContent(type="text", text=f"kRPC error: {exc}")]

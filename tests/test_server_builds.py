@@ -2,7 +2,6 @@
 
 from unittest.mock import MagicMock, patch
 
-
 # ---------------------------------------------------------------------------
 # Helpers to build a minimal mock kRPC Services protobuf
 # ---------------------------------------------------------------------------
