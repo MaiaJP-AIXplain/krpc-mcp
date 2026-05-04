@@ -102,6 +102,9 @@ pip install -e .
 For a full operator runbook from clean machine to validated live control, see
 [`docs/operator-setup-guide.md`](docs/operator-setup-guide.md).
 
+For a reusable Claude Code operating skill tailored to this MCP server, see
+[`docs/claude-code-krpc-skill.md`](docs/claude-code-krpc-skill.md).
+
 ## Configuration
 
 ### Claude Desktop
