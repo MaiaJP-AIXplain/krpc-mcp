@@ -69,9 +69,10 @@ def params_to_input_schema(parameters) -> dict:
     required: list[str] = []
 
     for param in parameters:
+        # The kRPC Parameter protobuf has no documentation field — only Procedure
+        # does. Per-parameter docs (if ever wanted) would have to be parsed out of
+        # proc.documentation's <param name="..."> blocks at the call site.
         schema = type_to_json_schema(param.type)
-        if param.documentation:
-            schema = {**schema, "description": strip_xml(param.documentation)}
         properties[param.name] = schema
         if not param.default_value:  # empty bytes ↔ no default ↔ required
             required.append(param.name)
