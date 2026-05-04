@@ -26,10 +26,10 @@ krpc-mcp = "krpc_mcp.server:main"
 
 [tool.hatch.build]
 exclude = [
-    ".venv/**",
+    ".venv*/**",
     "venv/**",
     ".env/**",
-    "**/.venv/**",
+    "**/.venv*/**",
     "**/venv/**",
     "**/.env/**",
 ]
