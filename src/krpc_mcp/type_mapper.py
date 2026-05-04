@@ -74,8 +74,12 @@ def params_to_input_schema(parameters) -> dict:
 
     for param in parameters:
         schema = type_to_json_schema(param.type)
-        if param.documentation:
-            schema = {**schema, "description": strip_xml(param.documentation)}
+        try:
+            documentation = getattr(param, "documentation", "")
+        except Exception:
+            documentation = ""
+        if documentation:
+            schema = {**schema, "description": strip_xml(documentation)}
         properties[param.name] = schema
         if not param.default_value:  # empty bytes ↔ no default ↔ required
             required.append(param.name)

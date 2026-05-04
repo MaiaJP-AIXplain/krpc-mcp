@@ -177,11 +177,11 @@ class KrpcBridge:
 
                 name = _tool_name(service.name, proc.name)
                 params = list(proc.parameters)
-                description = (
-                    strip_xml(proc.documentation)
-                    if proc.documentation
-                    else f"{service.name}.{proc.name}"
-                )
+                try:
+                    documentation = getattr(proc, "documentation", "")
+                except Exception:
+                    documentation = ""
+                description = strip_xml(documentation) if documentation else f"{service.name}.{proc.name}"
                 input_schema = params_to_input_schema(params)
 
                 self._tools.append(

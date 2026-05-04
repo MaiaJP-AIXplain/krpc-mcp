@@ -1,6 +1,7 @@
 """Smoke tests: server builds and bridge discovers tools via a mocked kRPC connection."""
 
 import logging
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 # ---------------------------------------------------------------------------
@@ -332,3 +333,47 @@ def test_discovery_info_log_includes_skipped_count(caplog):
     # 4 registered, 1 skipped
     assert "4" in summary
     assert "1" in summary
+
+
+def test_discovery_tolerates_param_without_documentation_field():
+    """Discovery should not crash when a parameter omits the optional documentation field."""
+    mock_conn = MagicMock()
+    services = _make_mock_services()
+    # Simulate kRPC metadata where a parameter object has no `documentation` attribute.
+    services.services[0].procedures[1].parameters[0] = SimpleNamespace(
+        name="ut",
+        type=_make_type(1),
+        default_value=b"",
+    )
+    mock_conn.krpc.get_services.return_value = services
+
+    with patch("krpc_mcp.bridge.get_connection", return_value=mock_conn):
+        from krpc_mcp.bridge import KrpcBridge
+
+        bridge = KrpcBridge()
+        tools = bridge.list_tools()
+
+    names = {t.name for t in tools}
+    assert "space_center_warp_to" in names
+
+
+def test_discovery_tolerates_proc_without_documentation_field():
+    """Discovery should not crash when a procedure omits the optional documentation field."""
+    mock_conn = MagicMock()
+    services = _make_mock_services()
+    proc = services.services[0].procedures[1]
+    services.services[0].procedures[1] = SimpleNamespace(
+        name=proc.name,
+        return_type=proc.return_type,
+        parameters=proc.parameters,
+    )
+    mock_conn.krpc.get_services.return_value = services
+
+    with patch("krpc_mcp.bridge.get_connection", return_value=mock_conn):
+        from krpc_mcp.bridge import KrpcBridge
+
+        bridge = KrpcBridge()
+        tools = bridge.list_tools()
+
+    names = {t.name for t in tools}
+    assert "space_center_warp_to" in names
