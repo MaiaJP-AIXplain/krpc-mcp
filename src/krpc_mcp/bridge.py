@@ -91,13 +91,56 @@ def _class_proxy(conn, service_name: str, class_name: str, instance_id: int):
     type(conn.space_center).Vessel.  We instantiate with (id, conn).
     """
     svc = _service_obj(conn, service_name)
-    cls = getattr(type(svc), class_name, None)
+    svc_type = type(svc)
+
+    # Some schemas report fully-qualified class names (e.g. "SpaceCenter.Control").
+    # Try exact lookup first, then progressively less-qualified names and
+    # case-insensitive matches against generated proxy class names.
+    segments = [seg for seg in class_name.split(".") if seg]
+    candidates = [class_name]
+    if segments:
+        candidates.extend(segments[i:] for i in range(1, len(segments)))
+        candidates = [".".join(x) if isinstance(x, list) else x for x in candidates]
+        candidates.extend(seg for seg in segments if seg not in candidates)
+
+    cls = None
+    normalized_members = {
+        attr.lower(): attr for attr in dir(svc_type) if not attr.startswith("_")
+    }
+    for candidate in candidates:
+        cls = getattr(svc_type, candidate, None)
+        if cls is not None:
+            break
+        actual = normalized_members.get(candidate.lower())
+        if actual is not None:
+            cls = getattr(svc_type, actual, None)
+            if cls is not None:
+                break
+
     if cls is None:
         raise AttributeError(
             f"Class {class_name!r} not found on service {service_name!r}. "
             "Ensure kRPC is running and the service is loaded."
         )
     return cls(instance_id, conn)
+
+
+def _infer_class_name(this_param, proc_name: str) -> str:
+    """Infer class name for a member procedure from schema metadata or procedure name."""
+    t = getattr(this_param, "type", None)
+    type_name = getattr(t, "name", "") if t is not None else ""
+    if type_name:
+        return type_name
+
+    # Fallback for schemas that omit Type.name for the implicit "this" parameter:
+    # class member procedures are named "<Class>_<Member>".
+    if "_" in proc_name:
+        return proc_name.split("_", 1)[0]
+
+    raise ValueError(
+        "Missing class metadata for parameter 'this': "
+        "cannot infer class name from schema or procedure name."
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -128,14 +171,13 @@ def _invoke(conn, service_name: str, proc_name: str, params: list, arguments: di
     this_param = params[0] if params and params[0].name == "this" else None
 
     if this_param:
-        class_name = this_param.type.name
+        class_name = _infer_class_name(this_param, proc_name)
         instance_id = arguments.get("this")
         if instance_id is None:
             raise ValueError("Missing required parameter 'this' (remote object ID)")
         proxy = _class_proxy(conn, service_name, class_name, int(instance_id))
-        # Strip "{ClassName}_" prefix to get the bare procedure name
-        pfx = f"{class_name}_"
-        bare = proc_name[len(pfx):] if proc_name.startswith(pfx) else proc_name
+        # Strip "<ClassName>_" prefix without depending on exact schema class-name formatting.
+        bare = proc_name.split("_", 1)[1] if "_" in proc_name else proc_name
         return _call_on(proxy, bare, params[1:], arguments)
 
     svc = _service_obj(conn, service_name)

@@ -160,6 +160,69 @@ def test_bridge_invoke_class_setter():
     assert result[0].text == "OK"
 
 
+def test_bridge_invoke_class_setter_with_qualified_class_name():
+    """Bridge resolves qualified class names like SpaceCenter.Control."""
+    mock_conn = MagicMock()
+    services = _make_mock_services()
+    services.services[0].procedures[3].parameters[0].type.name = "SpaceCenter.Control"
+    mock_conn.krpc.get_services.return_value = services
+
+    mock_control = MagicMock()
+    ControlCls = MagicMock(return_value=mock_control)
+    type(mock_conn.space_center).Control = ControlCls
+
+    with patch("krpc_mcp.bridge.get_connection", return_value=mock_conn):
+        from krpc_mcp.bridge import KrpcBridge
+        bridge = KrpcBridge()
+        result = bridge.call_tool("space_center_control_set_throttle", {"this": 11, "value": 0.25})
+
+    ControlCls.assert_called_once_with(11, mock_conn)
+    assert mock_control.throttle == 0.25
+    assert result[0].text == "OK"
+
+
+def test_bridge_invoke_class_setter_with_missing_this_type_name():
+    """Bridge infers class name from procedure prefix when this.type.name is missing."""
+    mock_conn = MagicMock()
+    services = _make_mock_services()
+    services.services[0].procedures[3].parameters[0].type.name = ""
+    mock_conn.krpc.get_services.return_value = services
+
+    mock_control = MagicMock()
+    ControlCls = MagicMock(return_value=mock_control)
+    type(mock_conn.space_center).Control = ControlCls
+
+    with patch("krpc_mcp.bridge.get_connection", return_value=mock_conn):
+        from krpc_mcp.bridge import KrpcBridge
+        bridge = KrpcBridge()
+        result = bridge.call_tool("space_center_control_set_throttle", {"this": 12, "value": 0.33})
+
+    ControlCls.assert_called_once_with(12, mock_conn)
+    assert mock_control.throttle == 0.33
+    assert result[0].text == "OK"
+
+
+def test_bridge_invoke_class_setter_case_insensitive_class_lookup():
+    """Bridge resolves class names case-insensitively when schema casing differs."""
+    mock_conn = MagicMock()
+    services = _make_mock_services()
+    services.services[0].procedures[3].parameters[0].type.name = "control"
+    mock_conn.krpc.get_services.return_value = services
+
+    mock_control = MagicMock()
+    ControlCls = MagicMock(return_value=mock_control)
+    type(mock_conn.space_center).Control = ControlCls
+
+    with patch("krpc_mcp.bridge.get_connection", return_value=mock_conn):
+        from krpc_mcp.bridge import KrpcBridge
+        bridge = KrpcBridge()
+        result = bridge.call_tool("space_center_control_set_throttle", {"this": 13, "value": 0.44})
+
+    ControlCls.assert_called_once_with(13, mock_conn)
+    assert mock_control.throttle == 0.44
+    assert result[0].text == "OK"
+
+
 def test_server_builds():
     """Server builds without errors using a mocked kRPC connection."""
     mock_conn = MagicMock()
