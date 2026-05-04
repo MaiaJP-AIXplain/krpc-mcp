@@ -4,11 +4,18 @@ At startup, calls conn.krpc.get_services() to obtain the full kRPC service
 schema, then registers one MCP tool per procedure.  Class-member procedures
 (those with a leading 'this' parameter) accept an integer instance_id so the
 caller can chain object references across tool calls.
+
+Class proxy resolution: kRPC Python's code generator emits proxy classes as
+top-level members of the generated service module (e.g. the ``Vessel`` class
+lives at ``krpc.services.spacecenter.Vessel``, not nested on the SpaceCenter
+service type), and instantiates them with ``(client, object_id)``.  We honour
+that contract directly when reconstructing a proxy from a remote object ID.
 """
 
 import logging
 import os
 import re
+import sys
 import time
 from typing import Any
 
@@ -116,67 +123,36 @@ def _service_obj(conn, service_name: str):
 def _class_proxy(conn, service_name: str, class_name: str, instance_id: int):
     """Reconstruct a kRPC class proxy from its remote object ID.
 
-    kRPC Python generates nested classes on the service type, e.g.
-    type(conn.space_center).Vessel.  We instantiate with (id, conn).
+    See module docstring: kRPC's generated proxy classes live as module-level
+    members of the service module and take ``(client, object_id)``.
     """
     svc = _service_obj(conn, service_name)
-    svc_type = type(svc)
-
-    # Some schemas report fully-qualified class names (e.g. "SpaceCenter.Control").
-    # Try exact lookup first, then progressively less-qualified names and
-    # case-insensitive matches against generated proxy class names.
-    segments = [seg for seg in class_name.split(".") if seg]
-    candidates = [class_name]
-    if segments:
-        candidates.extend(segments[i:] for i in range(1, len(segments)))
-        candidates = [".".join(x) if isinstance(x, list) else x for x in candidates]
-        candidates.extend(seg for seg in segments if seg not in candidates)
-
-    cls = None
-    normalized_members = {
-        attr.lower(): attr for attr in dir(svc_type) if not attr.startswith("_")
-    }
-    for candidate in candidates:
-        cls = getattr(svc_type, candidate, None)
-        if cls is not None:
-            break
-        actual = normalized_members.get(candidate.lower())
-        if actual is not None:
-            cls = getattr(svc_type, actual, None)
-            if cls is not None:
-                break
-
-    # Some kRPC Python builds expose generated proxy classes nested under other
-    # proxy classes (instead of directly on the service type). Search one level
-    # deep by class name to cover that runtime layout.
-    if cls is None:
-        for outer_name in normalized_members.values():
-            outer = getattr(svc_type, outer_name, None)
-            if outer is None:
-                continue
-            nested_members = {
-                attr.lower(): attr for attr in dir(outer) if not attr.startswith("_")
-            }
-            for candidate in candidates:
-                nested_name = nested_members.get(candidate.lower())
-                if nested_name is not None:
-                    cls = getattr(outer, nested_name, None)
-                    if cls is not None:
-                        break
-            if cls is not None:
-                break
-
-    if cls is None:
-        handle_hint = (
-            " For member procedures, pass the target object handle for that class "
-            "(for example: Vessel_get_Control -> Control_*), not a vessel handle."
-        )
+    module_name = type(svc).__module__
+    svc_module = sys.modules.get(module_name)
+    if svc_module is None:
         raise AttributeError(
-            f"Class {class_name!r} not found on service {service_name!r}. "
-            "Ensure kRPC is running and the service is loaded."
-            f"{handle_hint}"
+            f"kRPC service module {module_name!r} for service {service_name!r} "
+            "is not loaded; cannot resolve class proxies."
         )
-    return cls(instance_id, conn)
+
+    # Schemas occasionally report fully-qualified class names like
+    # "SpaceCenter.Vessel".  The code generator only exports the leaf name, so
+    # try that first; the qualified form is kept as a forward-compat fallback.
+    leaf = class_name.rsplit(".", 1)[-1]
+    candidates = (leaf,) if leaf == class_name else (leaf, class_name)
+
+    for candidate in candidates:
+        cls = getattr(svc_module, candidate, None)
+        if cls is not None:
+            return cls(conn, instance_id)
+
+    raise AttributeError(
+        f"kRPC class {class_name!r} not found in module {module_name!r} "
+        f"for service {service_name!r}. "
+        "For member procedures, pass the target object's handle "
+        "(e.g. Vessel_get_Control returns a Control handle for Control_* calls), "
+        "not a vessel handle."
+    )
 
 
 def _infer_class_name(this_param, proc_name: str) -> str:
@@ -277,7 +253,11 @@ class KrpcBridge:
                     documentation = getattr(proc, "documentation", "")
                 except Exception:
                     documentation = ""
-                description = strip_xml(documentation) if documentation else f"{service.name}.{proc.name}"
+                description = (
+                    strip_xml(documentation)
+                    if documentation
+                    else f"{service.name}.{proc.name}"
+                )
                 input_schema = params_to_input_schema(params)
 
                 self._tools.append(
@@ -337,7 +317,10 @@ class KrpcBridge:
             return [TextContent(type="text", text=f"Unknown tool: {name!r}")]
         service_name, proc_name, params = entry
 
-        read_only_mode = os.environ.get("KRPC_MCP_READ_ONLY", "").strip().lower() in {"1", "true", "yes"}
+        read_only_mode = (
+            os.environ.get("KRPC_MCP_READ_ONLY", "").strip().lower()
+            in {"1", "true", "yes"}
+        )
         if read_only_mode and _is_mutating_proc(proc_name):
             return [
                 TextContent(
@@ -364,7 +347,12 @@ class KrpcBridge:
             return [TextContent(type="text", text=format_result(result))]
         except ValueError as exc:
             elapsed_ms = int((time.monotonic() - t0) * 1000)
-            logger.warning("[bridge] call_tool %s bad input elapsed=%dms: %s", name, elapsed_ms, exc)
+            logger.warning(
+                "[bridge] call_tool %s bad input elapsed=%dms: %s",
+                name,
+                elapsed_ms,
+                exc,
+            )
             return [TextContent(type="text", text=f"[{name}] bad input: {exc}")]
         except krpc.error.RPCError as exc:
             elapsed_ms = int((time.monotonic() - t0) * 1000)
@@ -375,7 +363,11 @@ class KrpcBridge:
             return [TextContent(type="text", text=f"[{name}] kRPC RPC error: {msg}")]
         except Exception as exc:
             elapsed_ms = int((time.monotonic() - t0) * 1000)
-            logger.exception("[bridge] call_tool %s unexpected error elapsed=%dms", name, elapsed_ms)
+            logger.exception(
+                "[bridge] call_tool %s unexpected error elapsed=%dms",
+                name,
+                elapsed_ms,
+            )
             return [TextContent(type="text", text=f"[{name}] kRPC error: {exc}")]
 
     # ------------------------------------------------------------------
