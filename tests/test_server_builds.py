@@ -1,5 +1,6 @@
 """Smoke tests: server builds and bridge discovers tools via a mocked kRPC connection."""
 
+import logging
 from unittest.mock import MagicMock, patch
 
 # ---------------------------------------------------------------------------
@@ -168,3 +169,106 @@ def test_server_builds():
         server = build_server()
 
     assert server is not None
+
+
+# ---------------------------------------------------------------------------
+# Logging and timing tests
+# ---------------------------------------------------------------------------
+
+def test_call_tool_debug_logs_entry_and_exit(caplog):
+    """call_tool emits DEBUG lines with tool name and elapsed ms on success."""
+    mock_conn = MagicMock()
+    mock_conn.krpc.get_services.return_value = _make_mock_services()
+    mock_conn.space_center.warp_to.return_value = None
+
+    with patch("krpc_mcp.bridge.get_connection", return_value=mock_conn):
+        from krpc_mcp.bridge import KrpcBridge
+        bridge = KrpcBridge()
+        with caplog.at_level(logging.DEBUG, logger="krpc_mcp.bridge"):
+            bridge.call_tool("space_center_warp_to", {"ut": 1.0})
+
+    messages = [r.message for r in caplog.records]
+    entry = next((m for m in messages if "call_tool space_center_warp_to" in m and "args=" in m), None)
+    exit_ = next((m for m in messages if "call_tool space_center_warp_to" in m and "elapsed=" in m), None)
+    assert entry is not None, "Expected DEBUG entry log"
+    assert exit_ is not None, "Expected DEBUG exit log with elapsed"
+    assert "elapsed=" in exit_
+    assert "ms" in exit_
+
+
+def test_call_tool_debug_logs_arg_keys_not_values(caplog):
+    """Entry log includes argument key names but not their values."""
+    mock_conn = MagicMock()
+    mock_conn.krpc.get_services.return_value = _make_mock_services()
+    mock_conn.space_center.warp_to.return_value = None
+
+    with patch("krpc_mcp.bridge.get_connection", return_value=mock_conn):
+        from krpc_mcp.bridge import KrpcBridge
+        bridge = KrpcBridge()
+        with caplog.at_level(logging.DEBUG, logger="krpc_mcp.bridge"):
+            bridge.call_tool("space_center_warp_to", {"ut": 99999.0})
+
+    entry = next(
+        r.message for r in caplog.records
+        if "call_tool space_center_warp_to" in r.message and "args=" in r.message
+    )
+    assert "ut" in entry
+    assert "99999" not in entry
+
+
+def test_call_tool_value_error_logs_warning(caplog):
+    """ValueError raised during invocation logs at WARNING and includes tool name in response."""
+    mock_conn = MagicMock()
+    mock_conn.krpc.get_services.return_value = _make_mock_services()
+
+    VesselCls = MagicMock(side_effect=ValueError("instance_id must be int"))
+    type(mock_conn.space_center).Vessel = VesselCls
+
+    with patch("krpc_mcp.bridge.get_connection", return_value=mock_conn):
+        from krpc_mcp.bridge import KrpcBridge
+        bridge = KrpcBridge()
+        with caplog.at_level(logging.DEBUG, logger="krpc_mcp.bridge"):
+            result = bridge.call_tool("space_center_vessel_get_name", {"this": "notanint"})
+
+    warn_records = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert any("space_center_vessel_get_name" in r.message for r in warn_records)
+    assert "[space_center_vessel_get_name]" in result[0].text
+    assert "bad input" in result[0].text
+
+
+def test_call_tool_rpc_error_logs_error(caplog):
+    """krpc.error.RPCError logs at ERROR and includes tool name in response."""
+    import krpc.error
+
+    mock_conn = MagicMock()
+    mock_conn.krpc.get_services.return_value = _make_mock_services()
+    mock_conn.space_center.warp_to.side_effect = krpc.error.RPCError("connection reset")
+
+    with patch("krpc_mcp.bridge.get_connection", return_value=mock_conn):
+        from krpc_mcp.bridge import KrpcBridge
+        bridge = KrpcBridge()
+        with caplog.at_level(logging.DEBUG, logger="krpc_mcp.bridge"):
+            result = bridge.call_tool("space_center_warp_to", {"ut": 0.0})
+
+    error_records = [r for r in caplog.records if r.levelno == logging.ERROR]
+    assert any("space_center_warp_to" in r.message for r in error_records)
+    assert "[space_center_warp_to]" in result[0].text
+    assert "kRPC RPC error" in result[0].text
+
+
+def test_call_tool_unexpected_error_logs_exception(caplog):
+    """Unhandled exceptions log at ERROR with traceback and include tool name in response."""
+    mock_conn = MagicMock()
+    mock_conn.krpc.get_services.return_value = _make_mock_services()
+    mock_conn.space_center.warp_to.side_effect = RuntimeError("internal fault")
+
+    with patch("krpc_mcp.bridge.get_connection", return_value=mock_conn):
+        from krpc_mcp.bridge import KrpcBridge
+        bridge = KrpcBridge()
+        with caplog.at_level(logging.DEBUG, logger="krpc_mcp.bridge"):
+            result = bridge.call_tool("space_center_warp_to", {"ut": 0.0})
+
+    error_records = [r for r in caplog.records if r.levelno == logging.ERROR]
+    assert any("space_center_warp_to" in r.message for r in error_records)
+    assert "[space_center_warp_to]" in result[0].text
+    assert "kRPC error" in result[0].text

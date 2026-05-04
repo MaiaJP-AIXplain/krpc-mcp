@@ -8,6 +8,7 @@ caller can chain object references across tool calls.
 
 import logging
 import re
+import time
 from typing import Any
 
 import krpc.error
@@ -15,9 +16,27 @@ from mcp.server import Server
 from mcp.types import TextContent, Tool
 
 from .connection import get_connection
-from .type_mapper import SKIP_TYPE_CODES, format_result, params_to_input_schema, strip_xml
+from .type_mapper import (
+    SKIP_TYPE_CODES,
+    TC_EVENT,
+    TC_PROCEDURE_CALL,
+    TC_SERVICES,
+    TC_STATUS,
+    TC_STREAM,
+    format_result,
+    params_to_input_schema,
+    strip_xml,
+)
 
 MECHJEB_SERVICE = "MechJeb"
+
+_TYPE_CODE_NAMES: dict[int, str] = {
+    TC_EVENT: "TC_EVENT",
+    TC_PROCEDURE_CALL: "TC_PROCEDURE_CALL",
+    TC_STREAM: "TC_STREAM",
+    TC_STATUS: "TC_STATUS",
+    TC_SERVICES: "TC_SERVICES",
+}
 
 logger = logging.getLogger(__name__)
 
@@ -144,10 +163,16 @@ class KrpcBridge:
         self._conn = get_connection()
         services_proto = self._conn.krpc.get_services()
         count = 0
+        skipped = 0
+        service_counts: dict[str, int] = {}
 
         for service in services_proto.services:
+            svc_count = 0
             for proc in service.procedures:
-                if not self._is_exposable(proc):
+                reason = self._skip_reason(proc)
+                if reason is not None:
+                    logger.debug("Skipping %s.%s: %s", service.name, proc.name, reason)
+                    skipped += 1
                     continue
 
                 name = _tool_name(service.name, proc.name)
@@ -168,18 +193,34 @@ class KrpcBridge:
                 )
                 self._registry[name] = (service.name, proc.name, params)
                 count += 1
+                svc_count += 1
+
+            if svc_count:
+                service_counts[service.name] = svc_count
+
+        if logger.isEnabledFor(logging.DEBUG):
+            breakdown = ", ".join(f"{svc}: {n} tools" for svc, n in service_counts.items())
+            logger.debug("kRPC bridge per-service counts: %s", breakdown)
 
         n_services = len(services_proto.services)
-        logger.info("kRPC bridge: registered %d tools from %d services", count, n_services)
+        logger.info(
+            "kRPC bridge: registered %d tools from %d services (%d skipped)",
+            count,
+            n_services,
+            skipped,
+        )
 
     @staticmethod
-    def _is_exposable(proc) -> bool:
-        """Return False for procedures whose types cannot be represented in MCP."""
+    def _skip_reason(proc) -> str | None:
+        """Return a human-readable skip reason if the procedure cannot be exposed, else None."""
         if proc.return_type.code in SKIP_TYPE_CODES:
-            return False
-        if any(p.type.code in SKIP_TYPE_CODES for p in proc.parameters):
-            return False
-        return True
+            code_name = _TYPE_CODE_NAMES.get(proc.return_type.code, str(proc.return_type.code))
+            return f"unsupported return type {code_name}"
+        for p in proc.parameters:
+            if p.type.code in SKIP_TYPE_CODES:
+                code_name = _TYPE_CODE_NAMES.get(p.type.code, str(p.type.code))
+                return f"unsupported param type {code_name} on '{p.name}'"
+        return None
 
     def _ensure_ready(self) -> None:
         if self._conn is None:
@@ -206,17 +247,28 @@ class KrpcBridge:
             if err:
                 return [TextContent(type="text", text=err)]
 
+        logger.debug("[bridge] call_tool %s args=%s", name, list((arguments or {}).keys()))
+        t0 = time.monotonic()
         try:
             result = _invoke(self._conn, service_name, proc_name, params, arguments or {})
+            elapsed_ms = int((time.monotonic() - t0) * 1000)
+            logger.debug("[bridge] call_tool %s elapsed=%dms", name, elapsed_ms)
             return [TextContent(type="text", text=format_result(result))]
+        except ValueError as exc:
+            elapsed_ms = int((time.monotonic() - t0) * 1000)
+            logger.warning("[bridge] call_tool %s bad input elapsed=%dms: %s", name, elapsed_ms, exc)
+            return [TextContent(type="text", text=f"[{name}] bad input: {exc}")]
         except krpc.error.RPCError as exc:
+            elapsed_ms = int((time.monotonic() - t0) * 1000)
             msg = str(exc)
+            logger.error("[bridge] call_tool %s kRPC error elapsed=%dms: %s", name, elapsed_ms, msg)
             if "OperationException" in msg:
-                return [TextContent(type="text", text=f"MechJeb operation error: {msg}")]
-            return [TextContent(type="text", text=f"kRPC RPC error: {msg}")]
+                return [TextContent(type="text", text=f"[{name}] MechJeb operation error: {msg}")]
+            return [TextContent(type="text", text=f"[{name}] kRPC RPC error: {msg}")]
         except Exception as exc:
-            logger.exception("Error invoking kRPC tool %s", name)
-            return [TextContent(type="text", text=f"kRPC error: {exc}")]
+            elapsed_ms = int((time.monotonic() - t0) * 1000)
+            logger.exception("[bridge] call_tool %s unexpected error elapsed=%dms", name, elapsed_ms)
+            return [TextContent(type="text", text=f"[{name}] kRPC error: {exc}")]
 
     # ------------------------------------------------------------------
     # MCP Server wiring
