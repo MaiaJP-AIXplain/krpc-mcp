@@ -35,7 +35,13 @@ def _connect() -> krpc.Client:
         logger.info("Connected to kRPC at %s", host)
         return conn
     except Exception:
-        logger.error("Failed to connect to kRPC at %s (rpc=%d, stream=%d)", host, rpc_port, stream_port, exc_info=True)
+        logger.error(
+            "Failed to connect to kRPC at %s (rpc=%d, stream=%d)",
+            host,
+            rpc_port,
+            stream_port,
+            exc_info=True,
+        )
         raise
 
 

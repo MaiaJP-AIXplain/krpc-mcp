@@ -6,6 +6,8 @@ Covers the full set of SpaceCenter procedures needed to control a vessel:
 
 from unittest.mock import MagicMock, patch
 
+from ._helpers import build_proxy
+
 # ---------------------------------------------------------------------------
 # Type code constants (mirror type_mapper.py)
 # ---------------------------------------------------------------------------
@@ -347,239 +349,256 @@ def test_flight_get_altitude_schema():
 
 
 # ---------------------------------------------------------------------------
-# Invocation tests
+# Invocation tests — driven through the kspc_env fixture so they exercise the
+# real (module-level class lookup, (client, object_id) constructor) contract.
 # ---------------------------------------------------------------------------
 
-def test_invoke_get_active_vessel():
+
+def test_invoke_get_active_vessel(kspc_env):
     """get_ActiveVessel returns the vessel's remote object ID."""
-    mock_conn = MagicMock()
-    mock_conn.krpc.get_services.return_value = _make_vessel_control_services()
+    kspc_env.conn.krpc.get_services.return_value = _make_vessel_control_services()
     mock_vessel = MagicMock()
     mock_vessel._object_id = 101
-    mock_conn.space_center.active_vessel = mock_vessel
+    # Service-level getter hits the service proxy; no class proxy involved.
+    kspc_env.conn.space_center.active_vessel = mock_vessel
 
-    with patch("krpc_mcp.bridge.get_connection", return_value=mock_conn):
+    with patch("krpc_mcp.bridge.get_connection", return_value=kspc_env.conn):
         from krpc_mcp.bridge import KrpcBridge
         result = KrpcBridge().call_tool("space_center_get_active_vessel", {})
 
     assert "101" in result[0].text
 
 
-def test_invoke_control_set_throttle():
+def test_invoke_control_set_throttle(kspc_env):
     """Throttle setter calls setattr with the float value."""
-    mock_conn = MagicMock()
-    mock_conn.krpc.get_services.return_value = _make_vessel_control_services()
-    mock_control = MagicMock()
-    ControlCls = MagicMock(return_value=mock_control)
-    type(mock_conn.space_center).Control = ControlCls
+    instances: list = []
+    kspc_env.module.Control = build_proxy(
+        "Control", properties={"throttle": None}, instances=instances
+    )
+    kspc_env.conn.krpc.get_services.return_value = _make_vessel_control_services()
 
-    with patch("krpc_mcp.bridge.get_connection", return_value=mock_conn):
+    with patch("krpc_mcp.bridge.get_connection", return_value=kspc_env.conn):
         from krpc_mcp.bridge import KrpcBridge
-        result = KrpcBridge().call_tool("space_center_control_set_throttle", {"this": 5, "value": 0.8})
+        result = KrpcBridge().call_tool(
+            "space_center_control_set_throttle", {"this": 5, "value": 0.8}
+        )
 
-    ControlCls.assert_called_once_with(5, mock_conn)
-    assert mock_control.throttle == 0.8
+    assert (instances[0]._client, instances[0]._object_id) == (kspc_env.conn, 5)
+    assert instances[0].throttle == 0.8
     assert result[0].text == "OK"
 
 
-def test_invoke_control_set_sas():
+def test_invoke_control_set_sas(kspc_env):
     """SAS setter calls setattr with the bool value."""
-    mock_conn = MagicMock()
-    mock_conn.krpc.get_services.return_value = _make_vessel_control_services()
-    mock_control = MagicMock()
-    ControlCls = MagicMock(return_value=mock_control)
-    type(mock_conn.space_center).Control = ControlCls
+    instances: list = []
+    kspc_env.module.Control = build_proxy(
+        "Control", properties={"sas": False}, instances=instances
+    )
+    kspc_env.conn.krpc.get_services.return_value = _make_vessel_control_services()
 
-    with patch("krpc_mcp.bridge.get_connection", return_value=mock_conn):
+    with patch("krpc_mcp.bridge.get_connection", return_value=kspc_env.conn):
         from krpc_mcp.bridge import KrpcBridge
-        result = KrpcBridge().call_tool("space_center_control_set_sas", {"this": 5, "value": True})
+        result = KrpcBridge().call_tool(
+            "space_center_control_set_sas", {"this": 5, "value": True}
+        )
 
-    assert mock_control.sas is True
+    assert instances[0].sas is True
     assert result[0].text == "OK"
 
 
-def test_invoke_control_set_sas_mode():
+def test_invoke_control_set_sas_mode(kspc_env):
     """SAS mode setter passes the integer enum value to the proxy."""
-    mock_conn = MagicMock()
-    mock_conn.krpc.get_services.return_value = _make_vessel_control_services()
-    mock_control = MagicMock()
-    ControlCls = MagicMock(return_value=mock_control)
-    type(mock_conn.space_center).Control = ControlCls
+    instances: list = []
+    kspc_env.module.Control = build_proxy(
+        "Control", properties={"sas_mode": None}, instances=instances
+    )
+    kspc_env.conn.krpc.get_services.return_value = _make_vessel_control_services()
 
-    with patch("krpc_mcp.bridge.get_connection", return_value=mock_conn):
+    with patch("krpc_mcp.bridge.get_connection", return_value=kspc_env.conn):
         from krpc_mcp.bridge import KrpcBridge
         # SASMode.stability_assist = 0
-        result = KrpcBridge().call_tool("space_center_control_set_sas_mode", {"this": 5, "value": 0})
+        result = KrpcBridge().call_tool(
+            "space_center_control_set_sas_mode", {"this": 5, "value": 0}
+        )
 
-    assert mock_control.sas_mode == 0
+    assert instances[0].sas_mode == 0
     assert result[0].text == "OK"
 
 
-def test_invoke_control_set_rcs():
+def test_invoke_control_set_rcs(kspc_env):
     """RCS setter calls setattr with a bool."""
-    mock_conn = MagicMock()
-    mock_conn.krpc.get_services.return_value = _make_vessel_control_services()
-    mock_control = MagicMock()
-    ControlCls = MagicMock(return_value=mock_control)
-    type(mock_conn.space_center).Control = ControlCls
+    instances: list = []
+    kspc_env.module.Control = build_proxy(
+        "Control", properties={"rcs": False}, instances=instances
+    )
+    kspc_env.conn.krpc.get_services.return_value = _make_vessel_control_services()
 
-    with patch("krpc_mcp.bridge.get_connection", return_value=mock_conn):
+    with patch("krpc_mcp.bridge.get_connection", return_value=kspc_env.conn):
         from krpc_mcp.bridge import KrpcBridge
-        result = KrpcBridge().call_tool("space_center_control_set_rcs", {"this": 5, "value": True})
+        result = KrpcBridge().call_tool(
+            "space_center_control_set_rcs", {"this": 5, "value": True}
+        )
 
-    assert mock_control.rcs is True
+    assert instances[0].rcs is True
     assert result[0].text == "OK"
 
 
-def test_invoke_control_set_gear():
+def test_invoke_control_set_gear(kspc_env):
     """Gear setter calls setattr with a bool."""
-    mock_conn = MagicMock()
-    mock_conn.krpc.get_services.return_value = _make_vessel_control_services()
-    mock_control = MagicMock()
-    ControlCls = MagicMock(return_value=mock_control)
-    type(mock_conn.space_center).Control = ControlCls
+    instances: list = []
+    kspc_env.module.Control = build_proxy(
+        "Control", properties={"gear": False}, instances=instances
+    )
+    kspc_env.conn.krpc.get_services.return_value = _make_vessel_control_services()
 
-    with patch("krpc_mcp.bridge.get_connection", return_value=mock_conn):
+    with patch("krpc_mcp.bridge.get_connection", return_value=kspc_env.conn):
         from krpc_mcp.bridge import KrpcBridge
-        result = KrpcBridge().call_tool("space_center_control_set_gear", {"this": 5, "value": True})
+        result = KrpcBridge().call_tool(
+            "space_center_control_set_gear", {"this": 5, "value": True}
+        )
 
-    assert mock_control.gear is True
+    assert instances[0].gear is True
     assert result[0].text == "OK"
 
 
-def test_invoke_control_activate_next_stage():
+def test_invoke_control_activate_next_stage(kspc_env):
     """ActivateNextStage returns a JSON list of activated part object IDs."""
-    mock_conn = MagicMock()
-    mock_conn.krpc.get_services.return_value = _make_vessel_control_services()
-
     part1, part2 = MagicMock(), MagicMock()
     part1._object_id = 201
     part2._object_id = 202
-    mock_control = MagicMock()
-    mock_control.activate_next_stage.return_value = [part1, part2]
-    ControlCls = MagicMock(return_value=mock_control)
-    type(mock_conn.space_center).Control = ControlCls
+    invocations: list = []
 
-    with patch("krpc_mcp.bridge.get_connection", return_value=mock_conn):
+    def activate_next_stage(self, **kwargs):
+        invocations.append(kwargs)
+        return [part1, part2]
+
+    kspc_env.module.Control = build_proxy(
+        "Control", methods={"activate_next_stage": activate_next_stage}
+    )
+    kspc_env.conn.krpc.get_services.return_value = _make_vessel_control_services()
+
+    with patch("krpc_mcp.bridge.get_connection", return_value=kspc_env.conn):
         from krpc_mcp.bridge import KrpcBridge
-        result = KrpcBridge().call_tool("space_center_control_activate_next_stage", {"this": 5})
+        result = KrpcBridge().call_tool(
+            "space_center_control_activate_next_stage", {"this": 5}
+        )
 
-    mock_control.activate_next_stage.assert_called_once_with()
+    assert invocations == [{}]
     assert "201" in result[0].text
     assert "202" in result[0].text
 
 
-def test_invoke_autopilot_engage():
+def test_invoke_autopilot_engage(kspc_env):
     """AutoPilot.Engage calls engage() on the proxy."""
-    mock_conn = MagicMock()
-    mock_conn.krpc.get_services.return_value = _make_vessel_control_services()
-    mock_ap = MagicMock()
-    mock_ap.engage.return_value = None  # void method must return None → "OK"
-    AutoPilotCls = MagicMock(return_value=mock_ap)
-    type(mock_conn.space_center).AutoPilot = AutoPilotCls
+    calls: list = []
 
-    with patch("krpc_mcp.bridge.get_connection", return_value=mock_conn):
+    def engage(self, **kwargs):
+        calls.append(kwargs)
+        return None
+
+    kspc_env.module.AutoPilot = build_proxy("AutoPilot", methods={"engage": engage})
+    kspc_env.conn.krpc.get_services.return_value = _make_vessel_control_services()
+
+    with patch("krpc_mcp.bridge.get_connection", return_value=kspc_env.conn):
         from krpc_mcp.bridge import KrpcBridge
         result = KrpcBridge().call_tool("space_center_auto_pilot_engage", {"this": 3})
 
-    mock_ap.engage.assert_called_once_with()
+    assert calls == [{}]
     assert result[0].text == "OK"
 
 
-def test_invoke_autopilot_disengage():
+def test_invoke_autopilot_disengage(kspc_env):
     """AutoPilot.Disengage calls disengage() on the proxy."""
-    mock_conn = MagicMock()
-    mock_conn.krpc.get_services.return_value = _make_vessel_control_services()
-    mock_ap = MagicMock()
-    mock_ap.disengage.return_value = None  # void method must return None → "OK"
-    AutoPilotCls = MagicMock(return_value=mock_ap)
-    type(mock_conn.space_center).AutoPilot = AutoPilotCls
+    calls: list = []
 
-    with patch("krpc_mcp.bridge.get_connection", return_value=mock_conn):
+    def disengage(self, **kwargs):
+        calls.append(kwargs)
+        return None
+
+    kspc_env.module.AutoPilot = build_proxy("AutoPilot", methods={"disengage": disengage})
+    kspc_env.conn.krpc.get_services.return_value = _make_vessel_control_services()
+
+    with patch("krpc_mcp.bridge.get_connection", return_value=kspc_env.conn):
         from krpc_mcp.bridge import KrpcBridge
         result = KrpcBridge().call_tool("space_center_auto_pilot_disengage", {"this": 3})
 
-    mock_ap.disengage.assert_called_once_with()
+    assert calls == [{}]
     assert result[0].text == "OK"
 
 
-def test_invoke_autopilot_set_target_pitch():
+def test_invoke_autopilot_set_target_pitch(kspc_env):
     """AutoPilot target pitch setter uses setattr."""
-    mock_conn = MagicMock()
-    mock_conn.krpc.get_services.return_value = _make_vessel_control_services()
-    mock_ap = MagicMock()
-    AutoPilotCls = MagicMock(return_value=mock_ap)
-    type(mock_conn.space_center).AutoPilot = AutoPilotCls
+    instances: list = []
+    kspc_env.module.AutoPilot = build_proxy(
+        "AutoPilot", properties={"target_pitch": None}, instances=instances
+    )
+    kspc_env.conn.krpc.get_services.return_value = _make_vessel_control_services()
 
-    with patch("krpc_mcp.bridge.get_connection", return_value=mock_conn):
+    with patch("krpc_mcp.bridge.get_connection", return_value=kspc_env.conn):
         from krpc_mcp.bridge import KrpcBridge
-        result = KrpcBridge().call_tool("space_center_auto_pilot_set_target_pitch", {"this": 3, "value": 45.0})
+        result = KrpcBridge().call_tool(
+            "space_center_auto_pilot_set_target_pitch", {"this": 3, "value": 45.0}
+        )
 
-    assert mock_ap.target_pitch == 45.0
+    assert instances[0].target_pitch == 45.0
     assert result[0].text == "OK"
 
 
-def test_invoke_flight_get_altitude():
+def test_invoke_flight_get_altitude(kspc_env):
     """Flight altitude getter reads the altitude property from the proxy."""
-    mock_conn = MagicMock()
-    mock_conn.krpc.get_services.return_value = _make_vessel_control_services()
-    mock_flight = MagicMock()
-    mock_flight.altitude = 10000.0
-    FlightCls = MagicMock(return_value=mock_flight)
-    type(mock_conn.space_center).Flight = FlightCls
+    instances: list = []
+    kspc_env.module.Flight = build_proxy(
+        "Flight", properties={"altitude": 10000.0}, instances=instances
+    )
+    kspc_env.conn.krpc.get_services.return_value = _make_vessel_control_services()
 
-    with patch("krpc_mcp.bridge.get_connection", return_value=mock_conn):
+    with patch("krpc_mcp.bridge.get_connection", return_value=kspc_env.conn):
         from krpc_mcp.bridge import KrpcBridge
         result = KrpcBridge().call_tool("space_center_flight_get_altitude", {"this": 9})
 
-    FlightCls.assert_called_once_with(9, mock_conn)
+    assert (instances[0]._client, instances[0]._object_id) == (kspc_env.conn, 9)
     assert "10000.0" in result[0].text
 
 
-def test_invoke_flight_get_speed():
+def test_invoke_flight_get_speed(kspc_env):
     """Flight speed getter reads the speed property from the proxy."""
-    mock_conn = MagicMock()
-    mock_conn.krpc.get_services.return_value = _make_vessel_control_services()
-    mock_flight = MagicMock()
-    mock_flight.speed = 2200.5
-    FlightCls = MagicMock(return_value=mock_flight)
-    type(mock_conn.space_center).Flight = FlightCls
+    kspc_env.module.Flight = build_proxy("Flight", properties={"speed": 2200.5})
+    kspc_env.conn.krpc.get_services.return_value = _make_vessel_control_services()
 
-    with patch("krpc_mcp.bridge.get_connection", return_value=mock_conn):
+    with patch("krpc_mcp.bridge.get_connection", return_value=kspc_env.conn):
         from krpc_mcp.bridge import KrpcBridge
         result = KrpcBridge().call_tool("space_center_flight_get_speed", {"this": 9})
 
     assert "2200.5" in result[0].text
 
 
-def test_invoke_orbit_get_apoapsis_altitude():
+def test_invoke_orbit_get_apoapsis_altitude(kspc_env):
     """Orbit apoapsis altitude getter reads the property from the proxy."""
-    mock_conn = MagicMock()
-    mock_conn.krpc.get_services.return_value = _make_vessel_control_services()
-    mock_orbit = MagicMock()
-    mock_orbit.apoapsis_altitude = 75000.0
-    OrbitCls = MagicMock(return_value=mock_orbit)
-    type(mock_conn.space_center).Orbit = OrbitCls
+    instances: list = []
+    kspc_env.module.Orbit = build_proxy(
+        "Orbit", properties={"apoapsis_altitude": 75000.0}, instances=instances
+    )
+    kspc_env.conn.krpc.get_services.return_value = _make_vessel_control_services()
 
-    with patch("krpc_mcp.bridge.get_connection", return_value=mock_conn):
+    with patch("krpc_mcp.bridge.get_connection", return_value=kspc_env.conn):
         from krpc_mcp.bridge import KrpcBridge
-        result = KrpcBridge().call_tool("space_center_orbit_get_apoapsis_altitude", {"this": 11})
+        result = KrpcBridge().call_tool(
+            "space_center_orbit_get_apoapsis_altitude", {"this": 11}
+        )
 
-    OrbitCls.assert_called_once_with(11, mock_conn)
+    assert (instances[0]._client, instances[0]._object_id) == (kspc_env.conn, 11)
     assert "75000.0" in result[0].text
 
 
-def test_invoke_orbit_get_inclination():
+def test_invoke_orbit_get_inclination(kspc_env):
     """Orbit inclination getter reads the property from the proxy."""
-    mock_conn = MagicMock()
-    mock_conn.krpc.get_services.return_value = _make_vessel_control_services()
-    mock_orbit = MagicMock()
-    mock_orbit.inclination = 28.5
-    OrbitCls = MagicMock(return_value=mock_orbit)
-    type(mock_conn.space_center).Orbit = OrbitCls
+    kspc_env.module.Orbit = build_proxy("Orbit", properties={"inclination": 28.5})
+    kspc_env.conn.krpc.get_services.return_value = _make_vessel_control_services()
 
-    with patch("krpc_mcp.bridge.get_connection", return_value=mock_conn):
+    with patch("krpc_mcp.bridge.get_connection", return_value=kspc_env.conn):
         from krpc_mcp.bridge import KrpcBridge
-        result = KrpcBridge().call_tool("space_center_orbit_get_inclination", {"this": 11})
+        result = KrpcBridge().call_tool(
+            "space_center_orbit_get_inclination", {"this": 11}
+        )
 
     assert "28.5" in result[0].text

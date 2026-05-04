@@ -14,6 +14,8 @@ from unittest.mock import MagicMock, patch
 
 import krpc.error
 
+from ._helpers import build_proxy
+
 # ---------------------------------------------------------------------------
 # Type code constants (mirror type_mapper.py)
 # ---------------------------------------------------------------------------
@@ -263,24 +265,33 @@ def test_mechjeb_api_not_ready_blocks_tool_call():
     conn.mech_jeb.execute_one_node.assert_not_called()
 
 
-def test_mechjeb_api_ready_allows_tool_call():
+def test_mechjeb_api_ready_allows_tool_call(mechjeb_env):
     """When APIReady is True, the tool call proceeds normally."""
-    conn = _make_conn(api_ready=True)
+    mechjeb_env.conn.krpc.get_services.return_value = _make_mechjeb_services()
+    mechjeb_env.conn.mech_jeb.api_ready = True
 
-    mock_executor = MagicMock()
-    mock_executor.execute_one_node.return_value = None
-    NodeExecutorCls = MagicMock(return_value=mock_executor)
-    type(conn.mech_jeb).NodeExecutor = NodeExecutorCls
+    invocations: list = []
+    instances: list = []
 
-    with patch("krpc_mcp.bridge.get_connection", return_value=conn):
+    def execute_one_node(self, **kwargs):
+        invocations.append(kwargs)
+        return None
+
+    mechjeb_env.module.NodeExecutor = build_proxy(
+        "NodeExecutor",
+        methods={"execute_one_node": execute_one_node},
+        instances=instances,
+    )
+
+    with patch("krpc_mcp.bridge.get_connection", return_value=mechjeb_env.conn):
         from krpc_mcp.bridge import KrpcBridge
         bridge = KrpcBridge()
         result = bridge.call_tool(
             "mech_jeb_node_executor_execute_one_node", {"this": 5}
         )
 
-    NodeExecutorCls.assert_called_once_with(5, conn)
-    mock_executor.execute_one_node.assert_called_once()
+    assert (instances[0]._client, instances[0]._object_id) == (mechjeb_env.conn, 5)
+    assert invocations == [{}]
     assert result[0].text == "OK"
 
 
@@ -302,18 +313,19 @@ def test_mechjeb_get_api_ready_bypasses_guard():
 # OperationException error handling
 # ---------------------------------------------------------------------------
 
-def test_operation_exception_surfaced_as_mechjeb_error():
+def test_operation_exception_surfaced_as_mechjeb_error(mechjeb_env):
     """RPCError containing 'OperationException' is returned as a structured MechJeb error."""
-    conn = _make_conn(api_ready=True)
+    mechjeb_env.conn.krpc.get_services.return_value = _make_mechjeb_services()
+    mechjeb_env.conn.mech_jeb.api_ready = True
 
-    mock_op = MagicMock()
-    OperationCircularizeCls = MagicMock(return_value=mock_op)
-    type(conn.mech_jeb).OperationCircularize = OperationCircularizeCls
-    mock_op.make_nodes.side_effect = krpc.error.RPCError(
-        "OperationException: no orbit to circularize"
+    def make_nodes(self, **kwargs):
+        raise krpc.error.RPCError("OperationException: no orbit to circularize")
+
+    mechjeb_env.module.OperationCircularize = build_proxy(
+        "OperationCircularize", methods={"make_nodes": make_nodes}
     )
 
-    with patch("krpc_mcp.bridge.get_connection", return_value=conn):
+    with patch("krpc_mcp.bridge.get_connection", return_value=mechjeb_env.conn):
         from krpc_mcp.bridge import KrpcBridge
         bridge = KrpcBridge()
         result = bridge.call_tool(
@@ -324,16 +336,19 @@ def test_operation_exception_surfaced_as_mechjeb_error():
     assert "OperationException" in result[0].text
 
 
-def test_generic_rpc_error_surfaced_without_mechjeb_prefix():
+def test_generic_rpc_error_surfaced_without_mechjeb_prefix(mechjeb_env):
     """A plain RPCError (no OperationException) returns kRPC RPC error text."""
-    conn = _make_conn(api_ready=True)
+    mechjeb_env.conn.krpc.get_services.return_value = _make_mechjeb_services()
+    mechjeb_env.conn.mech_jeb.api_ready = True
 
-    mock_executor = MagicMock()
-    NodeExecutorCls = MagicMock(return_value=mock_executor)
-    type(conn.mech_jeb).NodeExecutor = NodeExecutorCls
-    mock_executor.execute_one_node.side_effect = krpc.error.RPCError("connection lost")
+    def execute_one_node(self, **kwargs):
+        raise krpc.error.RPCError("connection lost")
 
-    with patch("krpc_mcp.bridge.get_connection", return_value=conn):
+    mechjeb_env.module.NodeExecutor = build_proxy(
+        "NodeExecutor", methods={"execute_one_node": execute_one_node}
+    )
+
+    with patch("krpc_mcp.bridge.get_connection", return_value=mechjeb_env.conn):
         from krpc_mcp.bridge import KrpcBridge
         bridge = KrpcBridge()
         result = bridge.call_tool(
@@ -348,23 +363,30 @@ def test_generic_rpc_error_surfaced_without_mechjeb_prefix():
 # Integration scenario: ascent launch
 # ---------------------------------------------------------------------------
 
-def test_ascent_launch():
+def test_ascent_launch(mechjeb_env):
     """
     Ascent launch scenario:
       1. Get AscentAutopilot handle
       2. Set desired orbit altitude (100 km)
       3. Enable autopilot
     """
-    conn = _make_conn(api_ready=True)
+    mechjeb_env.conn.krpc.get_services.return_value = _make_mechjeb_services()
+    mechjeb_env.conn.mech_jeb.api_ready = True
 
-    mock_ap = MagicMock()
-    AscentAutopilotCls = MagicMock(return_value=mock_ap)
-    type(conn.mech_jeb).AscentAutopilot = AscentAutopilotCls
+    # Step 1's get_AscentAutopilot reads the service-level property; provide an
+    # object with the canonical _object_id so format_result returns "id=99".
+    mock_ap_handle = MagicMock()
+    mock_ap_handle._object_id = 99
+    mechjeb_env.conn.mech_jeb.ascent_autopilot = mock_ap_handle
 
-    # Simulate get_AscentAutopilot returning an object ID
-    conn.mech_jeb.ascent_autopilot._object_id = 99
+    instances: list = []
+    mechjeb_env.module.AscentAutopilot = build_proxy(
+        "AscentAutopilot",
+        properties={"desired_orbit_altitude": None, "enabled": False},
+        instances=instances,
+    )
 
-    with patch("krpc_mcp.bridge.get_connection", return_value=conn):
+    with patch("krpc_mcp.bridge.get_connection", return_value=mechjeb_env.conn):
         from krpc_mcp.bridge import KrpcBridge
         bridge = KrpcBridge()
 
@@ -377,15 +399,18 @@ def test_ascent_launch():
             "mech_jeb_ascent_autopilot_set_desired_orbit_altitude",
             {"this": 99, "value": 100000.0},
         )
-        AscentAutopilotCls.assert_called_with(99, conn)
-        assert mock_ap.desired_orbit_altitude == 100000.0
+        assert (instances[-1]._client, instances[-1]._object_id) == (
+            mechjeb_env.conn,
+            99,
+        )
+        assert instances[-1].desired_orbit_altitude == 100000.0
         assert result[0].text == "OK"
 
         # Step 3: enable autopilot
         result = bridge.call_tool(
             "mech_jeb_ascent_autopilot_set_enabled", {"this": 99, "value": True}
         )
-        assert mock_ap.enabled is True
+        assert instances[-1].enabled is True
         assert result[0].text == "OK"
 
 
@@ -393,32 +418,43 @@ def test_ascent_launch():
 # Integration scenario: circularize node creation + execution
 # ---------------------------------------------------------------------------
 
-def test_circularize_node_creation_and_execution():
+def test_circularize_node_creation_and_execution(mechjeb_env):
     """
     Circularize scenario:
-      1. Get ManeuverPlanner handle
+      1. Get ManeuverPlanner handle (not exercised here — covered by discovery)
       2. Get OperationCircularize handle
       3. Call MakeNodes() — returns list of node object IDs
       4. Get NodeExecutor handle
       5. ExecuteOneNode()
     """
-    conn = _make_conn(api_ready=True)
+    mechjeb_env.conn.krpc.get_services.return_value = _make_mechjeb_services()
+    mechjeb_env.conn.mech_jeb.api_ready = True
 
-    mock_planner = MagicMock()
-    ManeuverPlannerCls = MagicMock(return_value=mock_planner)
-    type(conn.mech_jeb).ManeuverPlanner = ManeuverPlannerCls
+    op_calls: list = []
+    op_instances: list = []
+    exec_calls: list = []
+    exec_instances: list = []
 
-    mock_op = MagicMock()
-    mock_op.make_nodes.return_value = []
-    OperationCircularizeCls = MagicMock(return_value=mock_op)
-    type(conn.mech_jeb).OperationCircularize = OperationCircularizeCls
+    def make_nodes(self, **kwargs):
+        op_calls.append(kwargs)
+        return []
 
-    mock_executor = MagicMock()
-    mock_executor.execute_one_node.return_value = None
-    NodeExecutorCls = MagicMock(return_value=mock_executor)
-    type(conn.mech_jeb).NodeExecutor = NodeExecutorCls
+    def execute_one_node(self, **kwargs):
+        exec_calls.append(kwargs)
+        return None
 
-    with patch("krpc_mcp.bridge.get_connection", return_value=conn):
+    mechjeb_env.module.OperationCircularize = build_proxy(
+        "OperationCircularize",
+        methods={"make_nodes": make_nodes},
+        instances=op_instances,
+    )
+    mechjeb_env.module.NodeExecutor = build_proxy(
+        "NodeExecutor",
+        methods={"execute_one_node": execute_one_node},
+        instances=exec_instances,
+    )
+
+    with patch("krpc_mcp.bridge.get_connection", return_value=mechjeb_env.conn):
         from krpc_mcp.bridge import KrpcBridge
         bridge = KrpcBridge()
 
@@ -426,16 +462,22 @@ def test_circularize_node_creation_and_execution():
         result = bridge.call_tool(
             "mech_jeb_operation_circularize_make_nodes", {"this": 20}
         )
-        OperationCircularizeCls.assert_called_once_with(20, conn)
-        mock_op.make_nodes.assert_called_once()
+        assert (op_instances[0]._client, op_instances[0]._object_id) == (
+            mechjeb_env.conn,
+            20,
+        )
+        assert op_calls == [{}]
         assert result[0].text == "[]"
 
         # Step 5: execute node
         result = bridge.call_tool(
             "mech_jeb_node_executor_execute_one_node", {"this": 30}
         )
-        NodeExecutorCls.assert_called_once_with(30, conn)
-        mock_executor.execute_one_node.assert_called_once()
+        assert (exec_instances[0]._client, exec_instances[0]._object_id) == (
+            mechjeb_env.conn,
+            30,
+        )
+        assert exec_calls == [{}]
         assert result[0].text == "OK"
 
 
@@ -443,36 +485,49 @@ def test_circularize_node_creation_and_execution():
 # Integration scenario: landing
 # ---------------------------------------------------------------------------
 
-def test_landing_untargeted():
+def test_landing_untargeted(mechjeb_env):
     """LandingAutopilot.LandUntargeted() dispatches correctly."""
-    conn = _make_conn(api_ready=True)
+    mechjeb_env.conn.krpc.get_services.return_value = _make_mechjeb_services()
+    mechjeb_env.conn.mech_jeb.api_ready = True
 
-    mock_lander = MagicMock()
-    mock_lander.land_untargeted.return_value = None
-    LandingAutopilotCls = MagicMock(return_value=mock_lander)
-    type(conn.mech_jeb).LandingAutopilot = LandingAutopilotCls
+    instances: list = []
+    calls: list = []
 
-    with patch("krpc_mcp.bridge.get_connection", return_value=conn):
+    def land_untargeted(self, **kwargs):
+        calls.append(kwargs)
+        return None
+
+    mechjeb_env.module.LandingAutopilot = build_proxy(
+        "LandingAutopilot",
+        methods={"land_untargeted": land_untargeted},
+        instances=instances,
+    )
+
+    with patch("krpc_mcp.bridge.get_connection", return_value=mechjeb_env.conn):
         from krpc_mcp.bridge import KrpcBridge
         bridge = KrpcBridge()
         result = bridge.call_tool(
             "mech_jeb_landing_autopilot_land_untargeted", {"this": 40}
         )
 
-    LandingAutopilotCls.assert_called_once_with(40, conn)
-    mock_lander.land_untargeted.assert_called_once()
+    assert (instances[0]._client, instances[0]._object_id) == (mechjeb_env.conn, 40)
+    assert calls == [{}]
     assert result[0].text == "OK"
 
 
-def test_landing_set_touchdown_speed():
+def test_landing_set_touchdown_speed(mechjeb_env):
     """LandingAutopilot touchdown speed setter works via bridge."""
-    conn = _make_conn(api_ready=True)
+    mechjeb_env.conn.krpc.get_services.return_value = _make_mechjeb_services()
+    mechjeb_env.conn.mech_jeb.api_ready = True
 
-    mock_lander = MagicMock()
-    LandingAutopilotCls = MagicMock(return_value=mock_lander)
-    type(conn.mech_jeb).LandingAutopilot = LandingAutopilotCls
+    instances: list = []
+    mechjeb_env.module.LandingAutopilot = build_proxy(
+        "LandingAutopilot",
+        properties={"touchdown_speed": None},
+        instances=instances,
+    )
 
-    with patch("krpc_mcp.bridge.get_connection", return_value=conn):
+    with patch("krpc_mcp.bridge.get_connection", return_value=mechjeb_env.conn):
         from krpc_mcp.bridge import KrpcBridge
         bridge = KrpcBridge()
         result = bridge.call_tool(
@@ -480,7 +535,7 @@ def test_landing_set_touchdown_speed():
             {"this": 40, "value": 2.0},
         )
 
-    assert mock_lander.touchdown_speed == 2.0
+    assert instances[0].touchdown_speed == 2.0
     assert result[0].text == "OK"
 
 
@@ -488,42 +543,50 @@ def test_landing_set_touchdown_speed():
 # Integration scenario: docking approach
 # ---------------------------------------------------------------------------
 
-def test_docking_approach_enable():
+def test_docking_approach_enable(mechjeb_env):
     """DockingAutopilot.Enabled = True dispatches as a property setter."""
-    conn = _make_conn(api_ready=True)
+    mechjeb_env.conn.krpc.get_services.return_value = _make_mechjeb_services()
+    mechjeb_env.conn.mech_jeb.api_ready = True
 
-    mock_docker = MagicMock()
-    DockingAutopilotCls = MagicMock(return_value=mock_docker)
-    type(conn.mech_jeb).DockingAutopilot = DockingAutopilotCls
+    instances: list = []
+    mechjeb_env.module.DockingAutopilot = build_proxy(
+        "DockingAutopilot",
+        properties={"enabled": False},
+        instances=instances,
+    )
 
-    with patch("krpc_mcp.bridge.get_connection", return_value=conn):
+    with patch("krpc_mcp.bridge.get_connection", return_value=mechjeb_env.conn):
         from krpc_mcp.bridge import KrpcBridge
         bridge = KrpcBridge()
         result = bridge.call_tool(
             "mech_jeb_docking_autopilot_set_enabled", {"this": 50, "value": True}
         )
 
-    DockingAutopilotCls.assert_called_once_with(50, conn)
-    assert mock_docker.enabled is True
+    assert (instances[0]._client, instances[0]._object_id) == (mechjeb_env.conn, 50)
+    assert instances[0].enabled is True
     assert result[0].text == "OK"
 
 
-def test_docking_approach_set_speed_limit():
+def test_docking_approach_set_speed_limit(mechjeb_env):
     """DockingAutopilot speed limit setter dispatches correctly."""
-    conn = _make_conn(api_ready=True)
+    mechjeb_env.conn.krpc.get_services.return_value = _make_mechjeb_services()
+    mechjeb_env.conn.mech_jeb.api_ready = True
 
-    mock_docker = MagicMock()
-    DockingAutopilotCls = MagicMock(return_value=mock_docker)
-    type(conn.mech_jeb).DockingAutopilot = DockingAutopilotCls
+    instances: list = []
+    mechjeb_env.module.DockingAutopilot = build_proxy(
+        "DockingAutopilot",
+        properties={"speed_limit": None},
+        instances=instances,
+    )
 
-    with patch("krpc_mcp.bridge.get_connection", return_value=conn):
+    with patch("krpc_mcp.bridge.get_connection", return_value=mechjeb_env.conn):
         from krpc_mcp.bridge import KrpcBridge
         bridge = KrpcBridge()
         result = bridge.call_tool(
             "mech_jeb_docking_autopilot_set_speed_limit", {"this": 50, "value": 1.5}
         )
 
-    assert mock_docker.speed_limit == 1.5
+    assert instances[0].speed_limit == 1.5
     assert result[0].text == "OK"
 
 
@@ -531,25 +594,35 @@ def test_docking_approach_set_speed_limit():
 # Node executor controls
 # ---------------------------------------------------------------------------
 
-def test_node_executor_autowarp_and_abort():
+def test_node_executor_autowarp_and_abort(mechjeb_env):
     """NodeExecutor autowarp setter and abort method dispatch correctly."""
-    conn = _make_conn(api_ready=True)
+    mechjeb_env.conn.krpc.get_services.return_value = _make_mechjeb_services()
+    mechjeb_env.conn.mech_jeb.api_ready = True
 
-    mock_executor = MagicMock()
-    mock_executor.abort.return_value = None
-    NodeExecutorCls = MagicMock(return_value=mock_executor)
-    type(conn.mech_jeb).NodeExecutor = NodeExecutorCls
+    instances: list = []
+    abort_calls: list = []
 
-    with patch("krpc_mcp.bridge.get_connection", return_value=conn):
+    def abort(self, **kwargs):
+        abort_calls.append(kwargs)
+        return None
+
+    mechjeb_env.module.NodeExecutor = build_proxy(
+        "NodeExecutor",
+        properties={"autowarp": False},
+        methods={"abort": abort},
+        instances=instances,
+    )
+
+    with patch("krpc_mcp.bridge.get_connection", return_value=mechjeb_env.conn):
         from krpc_mcp.bridge import KrpcBridge
         bridge = KrpcBridge()
 
         result = bridge.call_tool(
             "mech_jeb_node_executor_set_autowarp", {"this": 60, "value": True}
         )
-        assert mock_executor.autowarp is True
+        assert instances[-1].autowarp is True
         assert result[0].text == "OK"
 
         result = bridge.call_tool("mech_jeb_node_executor_abort", {"this": 60})
-        mock_executor.abort.assert_called_once()
+        assert abort_calls == [{}]
         assert result[0].text == "OK"

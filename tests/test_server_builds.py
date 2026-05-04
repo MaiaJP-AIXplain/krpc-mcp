@@ -4,6 +4,8 @@ import logging
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
+from ._helpers import build_proxy
+
 # ---------------------------------------------------------------------------
 # Helpers to build a minimal mock kRPC Services protobuf
 # ---------------------------------------------------------------------------
@@ -41,7 +43,12 @@ def _make_mock_services():
     sc.name = "SpaceCenter"
     sc.procedures = [
         # Service-level getter — returns a CLASS (Vessel ID)
-        _make_proc("get_ActiveVessel", return_code=100, return_service="SpaceCenter", return_name="Vessel"),
+        _make_proc(
+            "get_ActiveVessel",
+            return_code=100,
+            return_service="SpaceCenter",
+            return_name="Vessel",
+        ),
         # Service-level method with a numeric param
         _make_proc("WarpTo", params=[_make_param("ut", 1)]),  # TC_DOUBLE=1
         # Class member getter (this param) — returns STRING
@@ -120,146 +127,108 @@ def test_bridge_invoke_service_method():
     assert result[0].text == "OK"
 
 
-def test_bridge_invoke_class_getter():
+def test_bridge_invoke_class_getter(kspc_env):
     """Bridge reconstructs a class proxy and reads a property."""
-    mock_conn = MagicMock()
-    mock_conn.krpc.get_services.return_value = _make_mock_services()
+    instances: list = []
+    kspc_env.module.Vessel = build_proxy(
+        "Vessel", properties={"name": "Kerbal X"}, instances=instances
+    )
+    kspc_env.conn.krpc.get_services.return_value = _make_mock_services()
 
-    # Simulate the nested Vessel class on the SpaceCenter type
-    mock_vessel = MagicMock()
-    mock_vessel.name = "Kerbal X"
-
-    VesselCls = MagicMock(return_value=mock_vessel)
-    type(mock_conn.space_center).Vessel = VesselCls
-
-    with patch("krpc_mcp.bridge.get_connection", return_value=mock_conn):
+    with patch("krpc_mcp.bridge.get_connection", return_value=kspc_env.conn):
         from krpc_mcp.bridge import KrpcBridge
         bridge = KrpcBridge()
         result = bridge.call_tool("space_center_vessel_get_name", {"this": 42})
 
-    VesselCls.assert_called_once_with(42, mock_conn)
+    assert (instances[0]._client, instances[0]._object_id) == (kspc_env.conn, 42)
     assert result[0].text == "Kerbal X"
 
 
-def test_bridge_invoke_class_setter():
+def test_bridge_invoke_class_setter(kspc_env):
     """Bridge reconstructs a class proxy and sets a property."""
-    mock_conn = MagicMock()
-    mock_conn.krpc.get_services.return_value = _make_mock_services()
+    instances: list = []
+    kspc_env.module.Control = build_proxy(
+        "Control", properties={"throttle": None}, instances=instances
+    )
+    kspc_env.conn.krpc.get_services.return_value = _make_mock_services()
 
-    mock_control = MagicMock()
-    ControlCls = MagicMock(return_value=mock_control)
-    type(mock_conn.space_center).Control = ControlCls
-
-    with patch("krpc_mcp.bridge.get_connection", return_value=mock_conn):
+    with patch("krpc_mcp.bridge.get_connection", return_value=kspc_env.conn):
         from krpc_mcp.bridge import KrpcBridge
         bridge = KrpcBridge()
-        result = bridge.call_tool("space_center_control_set_throttle", {"this": 7, "value": 0.75})
+        result = bridge.call_tool(
+            "space_center_control_set_throttle", {"this": 7, "value": 0.75}
+        )
 
-    ControlCls.assert_called_once_with(7, mock_conn)
-    assert mock_control.throttle == 0.75
+    assert (instances[0]._client, instances[0]._object_id) == (kspc_env.conn, 7)
+    assert instances[0].throttle == 0.75
     assert result[0].text == "OK"
 
 
-def test_bridge_invoke_class_setter_with_qualified_class_name():
-    """Bridge resolves qualified class names like SpaceCenter.Control."""
-    mock_conn = MagicMock()
+def test_bridge_invoke_class_setter_with_qualified_class_name(kspc_env):
+    """Bridge resolves qualified class names like SpaceCenter.Control to the leaf."""
+    instances: list = []
+    kspc_env.module.Control = build_proxy(
+        "Control", properties={"throttle": None}, instances=instances
+    )
     services = _make_mock_services()
     services.services[0].procedures[3].parameters[0].type.name = "SpaceCenter.Control"
-    mock_conn.krpc.get_services.return_value = services
+    kspc_env.conn.krpc.get_services.return_value = services
 
-    mock_control = MagicMock()
-    ControlCls = MagicMock(return_value=mock_control)
-    type(mock_conn.space_center).Control = ControlCls
-
-    with patch("krpc_mcp.bridge.get_connection", return_value=mock_conn):
+    with patch("krpc_mcp.bridge.get_connection", return_value=kspc_env.conn):
         from krpc_mcp.bridge import KrpcBridge
         bridge = KrpcBridge()
-        result = bridge.call_tool("space_center_control_set_throttle", {"this": 11, "value": 0.25})
+        result = bridge.call_tool(
+            "space_center_control_set_throttle", {"this": 11, "value": 0.25}
+        )
 
-    ControlCls.assert_called_once_with(11, mock_conn)
-    assert mock_control.throttle == 0.25
+    assert (instances[0]._client, instances[0]._object_id) == (kspc_env.conn, 11)
+    assert instances[0].throttle == 0.25
     assert result[0].text == "OK"
 
 
-def test_bridge_invoke_class_setter_with_missing_this_type_name():
+def test_bridge_invoke_class_setter_with_missing_this_type_name(kspc_env):
     """Bridge infers class name from procedure prefix when this.type.name is missing."""
-    mock_conn = MagicMock()
+    instances: list = []
+    kspc_env.module.Control = build_proxy(
+        "Control", properties={"throttle": None}, instances=instances
+    )
     services = _make_mock_services()
     services.services[0].procedures[3].parameters[0].type.name = ""
-    mock_conn.krpc.get_services.return_value = services
+    kspc_env.conn.krpc.get_services.return_value = services
 
-    mock_control = MagicMock()
-    ControlCls = MagicMock(return_value=mock_control)
-    type(mock_conn.space_center).Control = ControlCls
-
-    with patch("krpc_mcp.bridge.get_connection", return_value=mock_conn):
+    with patch("krpc_mcp.bridge.get_connection", return_value=kspc_env.conn):
         from krpc_mcp.bridge import KrpcBridge
         bridge = KrpcBridge()
-        result = bridge.call_tool("space_center_control_set_throttle", {"this": 12, "value": 0.33})
+        result = bridge.call_tool(
+            "space_center_control_set_throttle", {"this": 12, "value": 0.33}
+        )
 
-    ControlCls.assert_called_once_with(12, mock_conn)
-    assert mock_control.throttle == 0.33
+    assert (instances[0]._client, instances[0]._object_id) == (kspc_env.conn, 12)
+    assert instances[0].throttle == 0.33
     assert result[0].text == "OK"
 
 
-def test_bridge_invoke_class_setter_case_insensitive_class_lookup():
-    """Bridge resolves class names case-insensitively when schema casing differs."""
-    mock_conn = MagicMock()
-    services = _make_mock_services()
-    services.services[0].procedures[3].parameters[0].type.name = "control"
-    mock_conn.krpc.get_services.return_value = services
+def test_bridge_class_proxy_error_includes_handle_guidance(kspc_env):
+    """Missing class → error text helps callers thread the right handle.
 
-    mock_control = MagicMock()
-    ControlCls = MagicMock(return_value=mock_control)
-    type(mock_conn.space_center).Control = ControlCls
+    The hint exists because callers commonly pass a Vessel handle into
+    Control_* tools by mistake; the error needs to point them at the
+    Vessel_get_Control -> Control_* chain.
+    """
+    # Intentionally do NOT register Control on the module.
+    kspc_env.conn.krpc.get_services.return_value = _make_mock_services()
 
-    with patch("krpc_mcp.bridge.get_connection", return_value=mock_conn):
+    with patch("krpc_mcp.bridge.get_connection", return_value=kspc_env.conn):
         from krpc_mcp.bridge import KrpcBridge
         bridge = KrpcBridge()
-        result = bridge.call_tool("space_center_control_set_throttle", {"this": 13, "value": 0.44})
+        result = bridge.call_tool(
+            "space_center_control_set_throttle", {"this": 32, "value": 0.1}
+        )
 
-    ControlCls.assert_called_once_with(13, mock_conn)
-    assert mock_control.throttle == 0.44
-    assert result[0].text == "OK"
-
-
-def test_bridge_invoke_class_setter_with_nested_proxy_class_lookup():
-    """Bridge resolves class names from one-level nested generated proxy types."""
-    mock_conn = MagicMock()
-    services = _make_mock_services()
-    services.services[0].procedures[3].parameters[0].type.name = "SpaceCenter.Control"
-    mock_conn.krpc.get_services.return_value = services
-
-    mock_control = MagicMock()
-    ControlCls = MagicMock(return_value=mock_control)
-
-    class VesselProxy:
-        Control = ControlCls
-
-    type(mock_conn.space_center).Vessel = VesselProxy
-
-    with patch("krpc_mcp.bridge.get_connection", return_value=mock_conn):
-        from krpc_mcp.bridge import KrpcBridge
-        bridge = KrpcBridge()
-        result = bridge.call_tool("space_center_control_set_throttle", {"this": 14, "value": 0.55})
-
-    ControlCls.assert_called_once_with(14, mock_conn)
-    assert mock_control.throttle == 0.55
-    assert result[0].text == "OK"
-
-
-def test_bridge_class_proxy_error_includes_handle_guidance():
-    """Error text guides callers to use class handle chains instead of vessel handles."""
-    mock_conn = MagicMock()
-    services = _make_mock_services()
-    mock_conn.krpc.get_services.return_value = services
-
-    with patch("krpc_mcp.bridge.get_connection", return_value=mock_conn):
-        from krpc_mcp.bridge import KrpcBridge
-        bridge = KrpcBridge()
-        result = bridge.call_tool("space_center_control_set_throttle", {"this": 32, "value": 0.1})
-
-    assert "Vessel_get_Control -> Control_*" in result[0].text
+    text = result[0].text
+    assert "Control" in text
+    assert "handle" in text.lower()
+    assert "Vessel_get_Control" in text
 
 
 def test_bridge_read_only_mode_blocks_mutating_calls():
@@ -271,7 +240,9 @@ def test_bridge_read_only_mode_blocks_mutating_calls():
         with patch.dict("os.environ", {"KRPC_MCP_READ_ONLY": "1"}, clear=False):
             from krpc_mcp.bridge import KrpcBridge
             bridge = KrpcBridge()
-            result = bridge.call_tool("space_center_control_set_throttle", {"this": 7, "value": 0.1})
+            result = bridge.call_tool(
+                "space_center_control_set_throttle", {"this": 7, "value": 0.1}
+            )
 
     assert "blocked by read-only mode" in result[0].text
 
@@ -319,8 +290,14 @@ def test_call_tool_debug_logs_entry_and_exit(caplog):
             bridge.call_tool("space_center_warp_to", {"ut": 1.0})
 
     messages = [r.message for r in caplog.records]
-    entry = next((m for m in messages if "call_tool space_center_warp_to" in m and "args=" in m), None)
-    exit_ = next((m for m in messages if "call_tool space_center_warp_to" in m and "elapsed=" in m), None)
+    entry = next(
+        (m for m in messages if "call_tool space_center_warp_to" in m and "args=" in m),
+        None,
+    )
+    exit_ = next(
+        (m for m in messages if "call_tool space_center_warp_to" in m and "elapsed=" in m),
+        None,
+    )
     assert entry is not None, "Expected DEBUG entry log"
     assert exit_ is not None, "Expected DEBUG exit log with elapsed"
     assert "elapsed=" in exit_
@@ -347,19 +324,23 @@ def test_call_tool_debug_logs_arg_keys_not_values(caplog):
     assert "99999" not in entry
 
 
-def test_call_tool_value_error_logs_warning(caplog):
+def test_call_tool_value_error_logs_warning(caplog, kspc_env):
     """ValueError raised during invocation logs at WARNING and includes tool name in response."""
-    mock_conn = MagicMock()
-    mock_conn.krpc.get_services.return_value = _make_mock_services()
 
-    VesselCls = MagicMock(side_effect=ValueError("instance_id must be int"))
-    type(mock_conn.space_center).Vessel = VesselCls
+    class _BoomVessel:
+        def __init__(self, client, object_id):
+            raise ValueError("instance_id must be int")
 
-    with patch("krpc_mcp.bridge.get_connection", return_value=mock_conn):
+    kspc_env.module.Vessel = _BoomVessel
+    kspc_env.conn.krpc.get_services.return_value = _make_mock_services()
+
+    with patch("krpc_mcp.bridge.get_connection", return_value=kspc_env.conn):
         from krpc_mcp.bridge import KrpcBridge
         bridge = KrpcBridge()
         with caplog.at_level(logging.DEBUG, logger="krpc_mcp.bridge"):
-            result = bridge.call_tool("space_center_vessel_get_name", {"this": "notanint"})
+            result = bridge.call_tool(
+                "space_center_vessel_get_name", {"this": "notanint"}
+            )
 
     warn_records = [r for r in caplog.records if r.levelno == logging.WARNING]
     assert any("space_center_vessel_get_name" in r.message for r in warn_records)

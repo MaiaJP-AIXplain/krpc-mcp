@@ -106,7 +106,11 @@ def format_result(value: Any) -> str:
     try:
         return json.dumps(_as_json(value), default=str)
     except Exception as exc:
-        logger.warning("format_result: JSON serialization failed for %s, falling back to str(): %s", type(value).__name__, exc)
+        logger.warning(
+            "format_result: JSON serialization failed for %s, falling back to str(): %s",
+            type(value).__name__,
+            exc,
+        )
         return str(value)
 
 
