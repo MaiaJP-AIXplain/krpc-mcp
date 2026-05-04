@@ -68,10 +68,24 @@ mech_jeb_node_executor_execute_one_node  this=30
 ## Requirements
 
 - Python 3.11+
-- KSP 1.x with [kRPC mod](https://krpc.github.io/krpc/) installed and the server started in-game
+- KSP 1.x with one of these setups:
+  - [kRPC mod](https://krpc.github.io/krpc/) installed and server started in-game
+  - kRPC + [MechJeb](https://github.com/MuMech/MechJeb2) + [KRPC.MechJeb](https://github.com/Genhis/KRPC.MechJeb) (required for MechJeb MCP tools)
 - An MCP host: [Claude Desktop](https://claude.ai/download) or Claude Code CLI
 
 ## Installation
+
+### Quickstart (recommended, no manual Python env setup)
+
+If you have [`uv`](https://docs.astral.sh/uv/), run the MCP server directly from PyPI:
+
+```bash
+claude mcp add krpc -- uvx krpc-mcp
+```
+
+This avoids a separate `pip install` step and keeps upgrades simple.
+
+### Alternative install methods
 
 ```bash
 pip install krpc-mcp
@@ -85,6 +99,9 @@ cd krpc-mcp
 pip install -e .
 ```
 
+For a full operator runbook from clean machine to validated live control, see
+[`docs/operator-setup-guide.md`](docs/operator-setup-guide.md).
+
 ## Configuration
 
 ### Claude Desktop
@@ -95,7 +112,8 @@ Add to `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS)
 {
   "mcpServers": {
     "krpc": {
-      "command": "krpc-mcp",
+      "command": "uvx",
+      "args": ["krpc-mcp"],
       "env": {
         "KRPC_HOST": "127.0.0.1",
         "KRPC_RPC_PORT": "50000",
@@ -108,7 +126,16 @@ Add to `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS)
 
 ### Claude Code CLI
 
+Recommended:
+
 ```bash
+claude mcp add krpc -- uvx krpc-mcp
+```
+
+Fallback (if you do not use `uv`):
+
+```bash
+pipx install krpc-mcp
 claude mcp add krpc -- krpc-mcp
 ```
 
@@ -130,7 +157,9 @@ Claude will use `get_orbit_info` to read the current orbit, then call `add_maneu
 
 ## API Testing (Postman)
 
-A Postman Collection is included at [`docs/kRPC-Postman-Collection.json`](docs/kRPC-Postman-Collection.json) for exploring and testing the kRPC API that this MCP server wraps.
+A Postman Collection is included at [`docs/kRPC-Postman-Collection.json`](docs/kRPC-Postman-Collection.json) for exploring and testing both supported APIs:
+- base kRPC endpoints
+- kRPC + KRPC.MechJeb endpoints
 
 ### Import
 
