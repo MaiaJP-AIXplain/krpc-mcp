@@ -24,6 +24,16 @@ dev = [
 [project.scripts]
 krpc-mcp = "krpc_mcp.server:main"
 
+[tool.hatch.build]
+exclude = [
+    ".venv/**",
+    "venv/**",
+    ".env/**",
+    "**/.venv/**",
+    "**/venv/**",
+    "**/.env/**",
+]
+
 [tool.hatch.build.targets.wheel]
 packages = ["src/krpc_mcp"]
 
