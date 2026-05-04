@@ -1,8 +1,11 @@
 """Maps kRPC type descriptors to JSON Schema types and serializes return values."""
 
 import json
+import logging
 import re
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 # kRPC TypeCode integer values (from KRPC.proto)
 TC_NONE = 0
@@ -60,6 +63,7 @@ def type_to_json_schema(t) -> dict:
     if code == TC_DICTIONARY:
         value_schema = type_to_json_schema(t.types[1]) if len(t.types) > 1 else {}
         return {"type": "object", "additionalProperties": value_schema}
+    logger.debug("type_to_json_schema: unknown type code %r, falling back to string schema", code)
     return {"type": "string"}  # safe fallback for unknown codes
 
 
@@ -97,7 +101,8 @@ def format_result(value: Any) -> str:
         return json.dumps([_as_json(v) for v in value], default=str)
     try:
         return json.dumps(_as_json(value), default=str)
-    except Exception:
+    except Exception as exc:
+        logger.warning("format_result: JSON serialization failed for %s, falling back to str(): %s", type(value).__name__, exc)
         return str(value)
 
 
@@ -108,6 +113,7 @@ def _as_json(value: Any) -> Any:
         return value
     if isinstance(value, (list, tuple)):
         return [_as_json(v) for v in value]
+    logger.debug("_as_json: unhandled type %s, falling back to str()", type(value).__name__)
     return str(value)
 
 
