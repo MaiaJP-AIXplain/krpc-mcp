@@ -1,17 +1,13 @@
-"""kRPC MCP server entry point."""
+"""kRPC MCP server — dynamically exposes the full kRPC API as MCP tools."""
 
 import asyncio
 import logging
 import sys
+
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
 
-from .tools import (
-    register_vessel_tools,
-    register_flight_tools,
-    register_orbit_tools,
-    register_resource_tools,
-)
+from .bridge import KrpcBridge
 from .connection import close_connection
 
 logging.basicConfig(level=logging.INFO, stream=sys.stderr)
@@ -19,19 +15,15 @@ logger = logging.getLogger(__name__)
 
 
 def build_server() -> Server:
+    """Build and return a configured MCP Server backed by the kRPC bridge."""
     server = Server("krpc-mcp")
-
-    register_vessel_tools(server)
-    register_flight_tools(server)
-    register_orbit_tools(server)
-    register_resource_tools(server)
-
+    KrpcBridge().attach(server)
     return server
 
 
 async def _run() -> None:
     server = build_server()
-    logger.info("krpc-mcp server starting on stdio transport")
+    logger.info("krpc-mcp: stdio transport ready (kRPC connection deferred to first tool call)")
     async with stdio_server() as (read_stream, write_stream):
         await server.run(read_stream, write_stream, server.create_initialization_options())
 
