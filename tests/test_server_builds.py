@@ -223,6 +223,31 @@ def test_bridge_invoke_class_setter_case_insensitive_class_lookup():
     assert result[0].text == "OK"
 
 
+def test_bridge_invoke_class_setter_with_nested_proxy_class_lookup():
+    """Bridge resolves class names from one-level nested generated proxy types."""
+    mock_conn = MagicMock()
+    services = _make_mock_services()
+    services.services[0].procedures[3].parameters[0].type.name = "SpaceCenter.Control"
+    mock_conn.krpc.get_services.return_value = services
+
+    mock_control = MagicMock()
+    ControlCls = MagicMock(return_value=mock_control)
+
+    class VesselProxy:
+        Control = ControlCls
+
+    type(mock_conn.space_center).Vessel = VesselProxy
+
+    with patch("krpc_mcp.bridge.get_connection", return_value=mock_conn):
+        from krpc_mcp.bridge import KrpcBridge
+        bridge = KrpcBridge()
+        result = bridge.call_tool("space_center_control_set_throttle", {"this": 14, "value": 0.55})
+
+    ControlCls.assert_called_once_with(14, mock_conn)
+    assert mock_control.throttle == 0.55
+    assert result[0].text == "OK"
+
+
 def test_server_builds():
     """Server builds without errors using a mocked kRPC connection."""
     mock_conn = MagicMock()

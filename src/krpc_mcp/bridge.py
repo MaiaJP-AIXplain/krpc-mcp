@@ -117,6 +117,26 @@ def _class_proxy(conn, service_name: str, class_name: str, instance_id: int):
             if cls is not None:
                 break
 
+    # Some kRPC Python builds expose generated proxy classes nested under other
+    # proxy classes (instead of directly on the service type). Search one level
+    # deep by class name to cover that runtime layout.
+    if cls is None:
+        for outer_name in normalized_members.values():
+            outer = getattr(svc_type, outer_name, None)
+            if outer is None:
+                continue
+            nested_members = {
+                attr.lower(): attr for attr in dir(outer) if not attr.startswith("_")
+            }
+            for candidate in candidates:
+                nested_name = nested_members.get(candidate.lower())
+                if nested_name is not None:
+                    cls = getattr(outer, nested_name, None)
+                    if cls is not None:
+                        break
+            if cls is not None:
+                break
+
     if cls is None:
         raise AttributeError(
             f"Class {class_name!r} not found on service {service_name!r}. "
