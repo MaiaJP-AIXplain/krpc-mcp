@@ -272,3 +272,63 @@ def test_call_tool_unexpected_error_logs_exception(caplog):
     assert any("space_center_warp_to" in r.message for r in error_records)
     assert "[space_center_warp_to]" in result[0].text
     assert "kRPC error" in result[0].text
+
+
+# ---------------------------------------------------------------------------
+# Discovery diagnostic tests (KER-36)
+# ---------------------------------------------------------------------------
+
+def test_discovery_logs_skipped_procedure_at_debug(caplog):
+    """Each skipped procedure is logged at DEBUG with the skip reason."""
+    mock_conn = MagicMock()
+    mock_conn.krpc.get_services.return_value = _make_mock_services()
+
+    with patch("krpc_mcp.bridge.get_connection", return_value=mock_conn):
+        from krpc_mcp.bridge import KrpcBridge
+        with caplog.at_level(logging.DEBUG, logger="krpc_mcp.bridge"):
+            bridge = KrpcBridge()
+            bridge.list_tools()  # triggers discovery
+
+    skip_records = [r for r in caplog.records if "Skipping" in r.message]
+    assert len(skip_records) == 1, "Expected exactly one skipped procedure log"
+    assert "some_stream_proc" in skip_records[0].message
+    assert "TC_STREAM" in skip_records[0].message
+
+
+def test_discovery_logs_per_service_breakdown_at_debug(caplog):
+    """Per-service tool counts are logged at DEBUG after discovery."""
+    mock_conn = MagicMock()
+    mock_conn.krpc.get_services.return_value = _make_mock_services()
+
+    with patch("krpc_mcp.bridge.get_connection", return_value=mock_conn):
+        from krpc_mcp.bridge import KrpcBridge
+        with caplog.at_level(logging.DEBUG, logger="krpc_mcp.bridge"):
+            bridge = KrpcBridge()
+            bridge.list_tools()
+
+    breakdown = next(
+        (r.message for r in caplog.records if "per-service counts" in r.message), None
+    )
+    assert breakdown is not None, "Expected per-service breakdown log"
+    assert "SpaceCenter" in breakdown
+    assert "tools" in breakdown
+
+
+def test_discovery_info_log_includes_skipped_count(caplog):
+    """The INFO summary log includes both the registered and skipped counts."""
+    mock_conn = MagicMock()
+    mock_conn.krpc.get_services.return_value = _make_mock_services()
+
+    with patch("krpc_mcp.bridge.get_connection", return_value=mock_conn):
+        from krpc_mcp.bridge import KrpcBridge
+        with caplog.at_level(logging.INFO, logger="krpc_mcp.bridge"):
+            bridge = KrpcBridge()
+            bridge.list_tools()
+
+    info_records = [r for r in caplog.records if r.levelno == logging.INFO]
+    summary = next((r.message for r in info_records if "registered" in r.message), None)
+    assert summary is not None
+    assert "skipped" in summary
+    # 4 registered, 1 skipped
+    assert "4" in summary
+    assert "1" in summary
