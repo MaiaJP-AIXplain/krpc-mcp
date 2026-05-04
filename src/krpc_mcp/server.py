@@ -1,7 +1,9 @@
 """kRPC MCP server — dynamically exposes the full kRPC API as MCP tools."""
 
+import argparse
 import asyncio
 import logging
+import os
 import sys
 
 from mcp.server import Server
@@ -29,6 +31,14 @@ async def _run() -> None:
 
 
 def main() -> None:
+    parser = argparse.ArgumentParser(description="kRPC MCP server")
+    parser.add_argument("--debug", action="store_true", help="Enable DEBUG logging")
+    args = parser.parse_args()
+
+    if args.debug or os.environ.get("KRPC_MCP_DEBUG", "").strip() == "1":
+        logging.getLogger().setLevel(logging.DEBUG)
+        logger.debug("Debug logging enabled")
+
     try:
         asyncio.run(_run())
     finally:
