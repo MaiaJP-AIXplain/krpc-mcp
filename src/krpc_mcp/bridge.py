@@ -7,6 +7,7 @@ caller can chain object references across tool calls.
 """
 
 import logging
+import os
 import re
 import time
 from typing import Any
@@ -40,6 +41,22 @@ _TYPE_CODE_NAMES: dict[int, str] = {
 
 logger = logging.getLogger(__name__)
 
+_MUTATING_PREFIXES: tuple[str, ...] = (
+    "set_",
+    "activate",
+    "warp",
+    "launch",
+    "recover",
+    "save",
+    "load",
+    "quick",
+    "revert",
+    "dock",
+    "undock",
+    "decouple",
+    "stage",
+)
+
 
 # ---------------------------------------------------------------------------
 # Naming helpers
@@ -54,6 +71,18 @@ def _to_snake(name: str) -> str:
 
 def _tool_name(service_name: str, proc_name: str) -> str:
     return f"{_to_snake(service_name)}_{_to_snake(proc_name)}"
+
+
+def _is_mutating_proc(proc_name: str) -> bool:
+    """Best-effort guard for procedures that can change game state."""
+    lowered = proc_name.lower()
+    candidates = [lowered]
+    if "_" in lowered:
+        candidates.append(lowered.split("_", 1)[1])
+
+    if any(candidate.startswith("get_") for candidate in candidates):
+        return False
+    return any(candidate.startswith(_MUTATING_PREFIXES) for candidate in candidates)
 
 
 # ---------------------------------------------------------------------------
@@ -307,6 +336,18 @@ class KrpcBridge:
         if entry is None:
             return [TextContent(type="text", text=f"Unknown tool: {name!r}")]
         service_name, proc_name, params = entry
+
+        read_only_mode = os.environ.get("KRPC_MCP_READ_ONLY", "").strip().lower() in {"1", "true", "yes"}
+        if read_only_mode and _is_mutating_proc(proc_name):
+            return [
+                TextContent(
+                    type="text",
+                    text=(
+                        f"[{name}] blocked by read-only mode: {service_name}.{proc_name} "
+                        "is mutating and disabled (KRPC_MCP_READ_ONLY=1)."
+                    ),
+                )
+            ]
 
         # Guard: verify MechJeb is initialised before any MechJeb call except APIReady itself.
         if service_name == MECHJEB_SERVICE and proc_name != "get_APIReady":

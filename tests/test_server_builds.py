@@ -262,6 +262,34 @@ def test_bridge_class_proxy_error_includes_handle_guidance():
     assert "Vessel_get_Control -> Control_*" in result[0].text
 
 
+def test_bridge_read_only_mode_blocks_mutating_calls():
+    """Read-only mode blocks mutating procedures such as set_ operations."""
+    mock_conn = MagicMock()
+    mock_conn.krpc.get_services.return_value = _make_mock_services()
+
+    with patch("krpc_mcp.bridge.get_connection", return_value=mock_conn):
+        with patch.dict("os.environ", {"KRPC_MCP_READ_ONLY": "1"}, clear=False):
+            from krpc_mcp.bridge import KrpcBridge
+            bridge = KrpcBridge()
+            result = bridge.call_tool("space_center_control_set_throttle", {"this": 7, "value": 0.1})
+
+    assert "blocked by read-only mode" in result[0].text
+
+
+def test_bridge_read_only_mode_allows_getters():
+    """Read-only mode still allows non-mutating get_ calls."""
+    mock_conn = MagicMock()
+    mock_conn.krpc.get_services.return_value = _make_mock_services()
+
+    with patch("krpc_mcp.bridge.get_connection", return_value=mock_conn):
+        with patch.dict("os.environ", {"KRPC_MCP_READ_ONLY": "1"}, clear=False):
+            from krpc_mcp.bridge import KrpcBridge
+            bridge = KrpcBridge()
+            result = bridge.call_tool("space_center_get_active_vessel", {})
+
+    assert "blocked by read-only mode" not in result[0].text
+
+
 def test_server_builds():
     """Server builds without errors using a mocked kRPC connection."""
     mock_conn = MagicMock()
