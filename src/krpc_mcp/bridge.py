@@ -138,9 +138,14 @@ def _class_proxy(conn, service_name: str, class_name: str, instance_id: int):
                 break
 
     if cls is None:
+        handle_hint = (
+            " For member procedures, pass the target object handle for that class "
+            "(for example: Vessel_get_Control -> Control_*), not a vessel handle."
+        )
         raise AttributeError(
             f"Class {class_name!r} not found on service {service_name!r}. "
             "Ensure kRPC is running and the service is loaded."
+            f"{handle_hint}"
         )
     return cls(instance_id, conn)
 

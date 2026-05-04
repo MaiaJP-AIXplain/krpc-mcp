@@ -248,6 +248,20 @@ def test_bridge_invoke_class_setter_with_nested_proxy_class_lookup():
     assert result[0].text == "OK"
 
 
+def test_bridge_class_proxy_error_includes_handle_guidance():
+    """Error text guides callers to use class handle chains instead of vessel handles."""
+    mock_conn = MagicMock()
+    services = _make_mock_services()
+    mock_conn.krpc.get_services.return_value = services
+
+    with patch("krpc_mcp.bridge.get_connection", return_value=mock_conn):
+        from krpc_mcp.bridge import KrpcBridge
+        bridge = KrpcBridge()
+        result = bridge.call_tool("space_center_control_set_throttle", {"this": 32, "value": 0.1})
+
+    assert "Vessel_get_Control -> Control_*" in result[0].text
+
+
 def test_server_builds():
     """Server builds without errors using a mocked kRPC connection."""
     mock_conn = MagicMock()
