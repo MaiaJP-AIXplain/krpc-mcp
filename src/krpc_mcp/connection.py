@@ -1,6 +1,7 @@
 """kRPC connection management — single shared client across all tools."""
 
 import os
+
 import krpc
 
 _conn: krpc.Client | None = None

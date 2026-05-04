@@ -2,7 +2,6 @@
 
 from unittest.mock import MagicMock, patch
 
-
 # ---------------------------------------------------------------------------
 # Helpers to build a minimal mock kRPC Services protobuf
 # ---------------------------------------------------------------------------
@@ -40,7 +39,12 @@ def _make_mock_services():
     sc.name = "SpaceCenter"
     sc.procedures = [
         # Service-level getter — returns a CLASS (Vessel ID)
-        _make_proc("get_ActiveVessel", return_code=100, return_service="SpaceCenter", return_name="Vessel"),
+        _make_proc(
+            "get_ActiveVessel",
+            return_code=100,
+            return_service="SpaceCenter",
+            return_name="Vessel",
+        ),
         # Service-level method with a numeric param
         _make_proc("WarpTo", params=[_make_param("ut", 1)]),  # TC_DOUBLE=1
         # Class member getter (this param) — returns STRING

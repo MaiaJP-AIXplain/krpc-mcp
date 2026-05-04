@@ -375,7 +375,9 @@ def test_invoke_control_set_throttle():
 
     with patch("krpc_mcp.bridge.get_connection", return_value=mock_conn):
         from krpc_mcp.bridge import KrpcBridge
-        result = KrpcBridge().call_tool("space_center_control_set_throttle", {"this": 5, "value": 0.8})
+        result = KrpcBridge().call_tool(
+            "space_center_control_set_throttle", {"this": 5, "value": 0.8}
+        )
 
     ControlCls.assert_called_once_with(5, mock_conn)
     assert mock_control.throttle == 0.8
@@ -409,7 +411,9 @@ def test_invoke_control_set_sas_mode():
     with patch("krpc_mcp.bridge.get_connection", return_value=mock_conn):
         from krpc_mcp.bridge import KrpcBridge
         # SASMode.stability_assist = 0
-        result = KrpcBridge().call_tool("space_center_control_set_sas_mode", {"this": 5, "value": 0})
+        result = KrpcBridge().call_tool(
+            "space_center_control_set_sas_mode", {"this": 5, "value": 0}
+        )
 
     assert mock_control.sas_mode == 0
     assert result[0].text == "OK"
@@ -513,7 +517,9 @@ def test_invoke_autopilot_set_target_pitch():
 
     with patch("krpc_mcp.bridge.get_connection", return_value=mock_conn):
         from krpc_mcp.bridge import KrpcBridge
-        result = KrpcBridge().call_tool("space_center_auto_pilot_set_target_pitch", {"this": 3, "value": 45.0})
+        result = KrpcBridge().call_tool(
+            "space_center_auto_pilot_set_target_pitch", {"this": 3, "value": 45.0}
+        )
 
     assert mock_ap.target_pitch == 45.0
     assert result[0].text == "OK"

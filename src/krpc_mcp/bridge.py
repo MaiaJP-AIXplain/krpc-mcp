@@ -95,7 +95,8 @@ def _invoke(conn, service_name: str, proc_name: str, params: list, arguments: di
             raise ValueError("Missing required parameter 'this' (remote object ID)")
         proxy = _class_proxy(conn, service_name, class_name, int(instance_id))
         # Strip "{ClassName}_" prefix to get the bare procedure name
-        bare = proc_name[len(class_name) + 1:] if proc_name.startswith(f"{class_name}_") else proc_name
+        prefix = f"{class_name}_"
+        bare = proc_name[len(prefix):] if proc_name.startswith(prefix) else proc_name
         return _call_on(proxy, bare, params[1:], arguments)
 
     svc = _service_obj(conn, service_name)
@@ -148,7 +149,11 @@ class KrpcBridge:
                 self._registry[name] = (service.name, proc.name, params)
                 count += 1
 
-        logger.info("kRPC bridge: registered %d tools from %d services", count, len(services_proto.services))
+        logger.info(
+            "kRPC bridge: registered %d tools from %d services",
+            count,
+            len(services_proto.services),
+        )
 
     @staticmethod
     def _is_exposable(proc) -> bool:
