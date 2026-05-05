@@ -1,21 +1,24 @@
 """Pins the kRPC class-proxy integration contract.
 
-Two assumptions are load-bearing for every class-member tool the bridge
-exposes:
+kRPC Python uses two code-gen strategies for service proxies, and the bridge
+must support both:
 
-  1. Generated proxy classes (``Vessel``, ``Control``, ``Flight``, ...) live as
-     ``module-level`` members of the kRPC service module — *not* as nested
-     classes on the service type.
-  2. Their constructor signature is ``__init__(client, object_id)``.
+  * *Static* services (e.g. ``SpaceCenter``): generated proxy classes live as
+    module-level members of the service's generated module
+    (``krpc.services.spacecenter.Vessel``).
+  * *Dynamic* services (e.g. ``MechJeb`` and other extension services):
+    proxy classes are attached as attributes on the service *type*
+    itself (``type(conn.mech_jeb).ManeuverPlanner``); ``type(svc).__module__``
+    points at ``krpc.service``, the runtime base, not a generated module.
 
-Both have been broken in the past in ways that ``MagicMock``-only tests could
-not catch (the wrong attribute was mocked, or the wrong call shape was
-asserted, and discovery never raised). The tests below reproduce the exact
-real-world contract end-to-end through ``KrpcBridge.call_tool``.
+Across both, the constructor signature is ``__init__(client, object_id)``.
 
-If a future contributor reverts to ``cls(instance_id, conn)`` or starts
-searching ``type(svc)`` again, *these* tests fail — preventing a regression
-of the silent-no-tools / vessel-not-found classes of bug.
+Bugs in either path have shipped before in ways that ``MagicMock``-only tests
+couldn't catch — the wrong attribute was mocked, or the wrong call shape was
+asserted, and discovery silently passed. The tests below reproduce the
+real-world contract end-to-end through ``KrpcBridge.call_tool`` for both
+code-gen strategies, so a regression to either ``cls(instance_id, conn)`` or
+to a single-pattern lookup fails CI loudly.
 """
 
 from __future__ import annotations
@@ -288,3 +291,117 @@ def test_returned_proxy_is_serialised_with_object_id(kspc_env):
         result = KrpcBridge().call_tool("space_center_vessel_get_control", {"this": 1})
 
     assert result[0].text == "FakeControl(id=99)"
+
+
+# ---------------------------------------------------------------------------
+# Dynamic-service contract — proxy classes attached to type(svc) directly
+# (the path used by kRPC extension services such as MechJeb).
+# ---------------------------------------------------------------------------
+
+
+def test_dynamic_service_resolves_proxy_from_service_type():
+    """Bridge falls back to ``type(svc).<ProxyClass>`` for dynamic services.
+
+    Regression: extension services (e.g. MechJeb) load via kRPC's runtime
+    DynamicType machinery, which attaches generated proxy classes to the
+    service type itself rather than emitting them into a per-service module.
+    The bridge must search both locations or every member-procedure call on
+    an extension service fails with "class not found".
+    """
+    from unittest.mock import MagicMock, patch
+
+    from krpc_mcp.bridge import KrpcBridge
+
+    constructed: list[tuple] = []
+
+    class FakeManeuverPlanner:
+        def __init__(self, client, object_id):
+            constructed.append((client, object_id))
+            self._client = client
+            self._object_id = object_id
+            self.operation_circularize = MagicMock(_object_id=11)
+
+    class FakeMechJebService:
+        # MechJeb's readiness guard reads api_ready before any non-APIReady call.
+        api_ready = True
+        ManeuverPlanner = FakeManeuverPlanner
+
+    # Critically: __module__ is *not* a generated module — sys.modules has no
+    # entry for it, mirroring the dynamic-service runtime layout.
+    FakeMechJebService.__module__ = "krpc.service"
+
+    sc = MagicMock()
+    sc.name = "MechJeb"
+    sc.procedures = [
+        _proto_proc(
+            "ManeuverPlanner_get_OperationCircularize",
+            params=[
+                _proto_param("this", TC_CLASS, service="MechJeb", type_name="ManeuverPlanner")
+            ],
+            return_code=TC_CLASS,
+            return_service="MechJeb",
+            return_name="OperationCircularize",
+        ),
+    ]
+    services = MagicMock()
+    services.services = [sc]
+
+    mock_conn = MagicMock()
+    mock_conn.mech_jeb = FakeMechJebService()
+    mock_conn.krpc.get_services.return_value = services
+
+    with patch("krpc_mcp.bridge.get_connection", return_value=mock_conn):
+        result = KrpcBridge().call_tool(
+            "mech_jeb_maneuver_planner_get_operation_circularize", {"this": 8}
+        )
+
+    assert constructed == [(mock_conn, 8)]
+    assert "id=11" in result[0].text
+
+
+def test_dynamic_service_lookup_ignores_non_class_attributes():
+    """Stray non-class attributes on type(svc) must not be mistaken for proxies.
+
+    ``getattr(type(svc), name)`` will happily return functions, dicts, and so
+    on; the bridge must filter to actual classes before invoking the
+    ``(client, object_id)`` constructor.
+    """
+    from unittest.mock import MagicMock, patch
+
+    from krpc_mcp.bridge import KrpcBridge
+
+    class FakeService:
+        api_ready = True
+        # Stray non-class attribute named like a proxy class.
+        ManeuverPlanner = "not a class"
+
+    FakeService.__module__ = "krpc.service"
+
+    sc = MagicMock()
+    sc.name = "MechJeb"
+    sc.procedures = [
+        _proto_proc(
+            "ManeuverPlanner_get_OperationCircularize",
+            params=[
+                _proto_param("this", TC_CLASS, service="MechJeb", type_name="ManeuverPlanner")
+            ],
+            return_code=TC_CLASS,
+            return_service="MechJeb",
+            return_name="OperationCircularize",
+        ),
+    ]
+    services = MagicMock()
+    services.services = [sc]
+
+    mock_conn = MagicMock()
+    mock_conn.mech_jeb = FakeService()
+    mock_conn.krpc.get_services.return_value = services
+
+    with patch("krpc_mcp.bridge.get_connection", return_value=mock_conn):
+        result = KrpcBridge().call_tool(
+            "mech_jeb_maneuver_planner_get_operation_circularize", {"this": 8}
+        )
+
+    # Non-class attribute is ignored → resolution falls through → clear error.
+    assert "ManeuverPlanner" in result[0].text
+    assert "not found" in result[0].text

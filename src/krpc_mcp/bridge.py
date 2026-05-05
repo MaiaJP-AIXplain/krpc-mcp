@@ -5,11 +5,21 @@ schema, then registers one MCP tool per procedure.  Class-member procedures
 (those with a leading 'this' parameter) accept an integer instance_id so the
 caller can chain object references across tool calls.
 
-Class proxy resolution: kRPC Python's code generator emits proxy classes as
-top-level members of the generated service module (e.g. the ``Vessel`` class
-lives at ``krpc.services.spacecenter.Vessel``, not nested on the SpaceCenter
-service type), and instantiates them with ``(client, object_id)``.  We honour
-that contract directly when reconstructing a proxy from a remote object ID.
+Class proxy resolution: kRPC Python uses two code-gen strategies depending on
+how the service was loaded.
+
+  1. *Static* services (e.g. ``SpaceCenter``): each generated proxy class is a
+     top-level member of the service's generated module — ``Vessel`` lives at
+     ``krpc.services.spacecenter.Vessel``.
+  2. *Dynamic* services (e.g. the ``MechJeb`` extension service): proxy
+     classes are attached as attributes on the service *type* itself
+     (``type(conn.mech_jeb).ManeuverPlanner``); the service type's
+     ``__module__`` is ``krpc.service``, the runtime base, not a generated
+     module.
+
+In both cases, generated proxies share the same ``__init__(client, object_id)``
+signature.  ``_class_proxy`` searches the static module first (the common
+case) and falls back to the service type's attributes for dynamic services.
 """
 
 import logging
@@ -123,17 +133,12 @@ def _service_obj(conn, service_name: str):
 def _class_proxy(conn, service_name: str, class_name: str, instance_id: int):
     """Reconstruct a kRPC class proxy from its remote object ID.
 
-    See module docstring: kRPC's generated proxy classes live as module-level
-    members of the service module and take ``(client, object_id)``.
+    See module docstring for the two code-gen strategies kRPC uses. We try
+    the static-module location first (the common case for first-party
+    services like SpaceCenter), then fall back to attributes on the service
+    type itself (extension services like MechJeb).
     """
     svc = _service_obj(conn, service_name)
-    module_name = type(svc).__module__
-    svc_module = sys.modules.get(module_name)
-    if svc_module is None:
-        raise AttributeError(
-            f"kRPC service module {module_name!r} for service {service_name!r} "
-            "is not loaded; cannot resolve class proxies."
-        )
 
     # Schemas occasionally report fully-qualified class names like
     # "SpaceCenter.Vessel".  The code generator only exports the leaf name, so
@@ -141,14 +146,28 @@ def _class_proxy(conn, service_name: str, class_name: str, instance_id: int):
     leaf = class_name.rsplit(".", 1)[-1]
     candidates = (leaf,) if leaf == class_name else (leaf, class_name)
 
+    # 1) Static services: proxy classes are module-level members of the
+    #    service's generated module (e.g. krpc.services.spacecenter.Vessel).
+    module_name = type(svc).__module__
+    svc_module = sys.modules.get(module_name)
+    if svc_module is not None:
+        for candidate in candidates:
+            cls = getattr(svc_module, candidate, None)
+            if cls is not None:
+                return cls(conn, instance_id)
+
+    # 2) Dynamic services (kRPC extensions like MechJeb): proxy classes are
+    #    attached as attributes on the service type. Their __init__ shares
+    #    the same (client, object_id) shape as static services.
+    svc_type = type(svc)
     for candidate in candidates:
-        cls = getattr(svc_module, candidate, None)
-        if cls is not None:
+        cls = getattr(svc_type, candidate, None)
+        if cls is not None and isinstance(cls, type):
             return cls(conn, instance_id)
 
     raise AttributeError(
-        f"kRPC class {class_name!r} not found in module {module_name!r} "
-        f"for service {service_name!r}. "
+        f"kRPC class {class_name!r} not found for service {service_name!r} "
+        f"(searched module {module_name!r} and type {svc_type.__name__!r}). "
         "For member procedures, pass the target object's handle "
         "(e.g. Vessel_get_Control returns a Control handle for Control_* calls), "
         "not a vessel handle."
