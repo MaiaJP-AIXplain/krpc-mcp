@@ -1,4 +1,4 @@
-"""kRPC MCP server — dynamically exposes the full kRPC API as MCP tools."""
+"""kRPC MCP server — curated copilot and mission-assist tools for kRPC."""
 
 import argparse
 import asyncio

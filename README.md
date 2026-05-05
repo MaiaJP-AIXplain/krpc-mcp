@@ -12,24 +12,29 @@ KSP + kRPC mod  ←──gRPC──→  krpc-mcp server  ←──MCP──→  
 
 ## Features
 
+By default, `krpc-mcp` exposes a curated copilot surface: the tools an AI agent
+needs for vessel state, safe control, mission planning, and MechJeb automation.
+Set `KRPC_MCP_TOOL_MODE=full` when you need the low-level 1:1 kRPC API for
+debugging or development.
+
 | Category | Tools |
 |---|---|
-| Vessel info | `get_vessel_info`, `list_vessels`, `set_active_vessel` |
-| Flight controls | `set_throttle`, `activate_next_stage`, `set_sas`, `set_rcs`, `set_gear`, `set_brakes`, `set_autopilot_target_pitch_heading`, `disengage_autopilot` |
-| Orbital mechanics | `get_orbit_info`, `add_maneuver_node`, `remove_all_maneuver_nodes`, `warp_to`, `get_universal_time` |
-| Resources | `get_resources`, `get_resource_amount` |
+| Mission assist | `mission_assist_flight_snapshot`, `mission_assist_plan_goal` |
+| Vessel/body info | `space_center_get_active_vessel`, `space_center_get_vessels`, `space_center_get_bodies`, `space_center_set_active_vessel`, `space_center_set_target_body`, `space_center_vessel_get_name`, `space_center_vessel_get_mass`, `space_center_vessel_get_situation` |
+| Flight controls | `space_center_control_set_throttle`, `space_center_control_activate_next_stage`, `space_center_control_set_sas`, `space_center_control_set_rcs`, `space_center_control_set_gear`, `space_center_control_set_brakes`, `space_center_auto_pilot_target_pitch_and_heading`, `space_center_auto_pilot_disengage` |
+| Orbital mechanics | `space_center_vessel_get_orbit`, `space_center_control_add_node`, `space_center_control_get_nodes`, `space_center_node_remove`, `space_center_warp_to`, `space_center_get_ut` |
+| Resources | `space_center_vessel_get_resources`, `space_center_resources_get_names`, `space_center_resources_amount`, `space_center_resources_max` |
 
 ### MechJeb integration
 
-When the [kRPC.MechJeb](https://github.com/Genhis/KRPC.MechJeb) mod is installed, all 19 MechJeb services are automatically exposed as MCP tools — no extra configuration needed.
+When the [kRPC.MechJeb](https://github.com/Genhis/KRPC.MechJeb) mod is installed, mission-level agents should prefer the curated `mech_jeb_*` tools for launch, maneuver planning, node execution, landing, docking, and rendezvous. Direct `space_center_*` control remains available as a fallback.
 
 | Category | Exposed services |
 |---|---|
-| Autopilots | `AscentAutopilot` (+ Classic/GT/PVG profiles), `LandingAutopilot`, `DockingAutopilot`, `RendezvousAutopilot`, `AirplaneAutopilot` |
-| Attitude & execution | `SmartASS` (mode/reference frame + `Update()`), `Translatron`, `NodeExecutor` (`ExecuteOneNode/AllNodes/Abort`) |
-| Maneuver planning | `ManeuverPlanner` — all 16 operation types with `TimeSelector`; `MakeNodes()` + auto-execute path |
-| Controllers | `ThrustController`, `StagingController`, `RCSController`, `SmartRCS` |
-| Utilities | `TargetController`, `AntennaController`, `SolarPanelController` |
+| Autopilots | `AscentAutopilot`, `LandingAutopilot`, `DockingAutopilot`, `RendezvousAutopilot` |
+| Attitude & execution | `SmartASS` mode/interface + `Update()`, `NodeExecutor` (`ExecuteOneNode/AllNodes/Abort`) |
+| Maneuver planning | `ManeuverPlanner` for circularize, apoapsis, periapsis, interplanetary transfer, transfer, plane/inclination, Lambert, and course-correction operations; `MakeNode(s)` + node execution path |
+| Controllers | `ThrustController`, `StagingController`, `RCSController` |
 
 **Safety guarantees:**
 - `MechJeb.APIReady` is checked before every MechJeb tool call. If the mod is not yet initialised the server returns a clear error instead of a cryptic RPC failure.

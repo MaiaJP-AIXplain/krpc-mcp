@@ -149,10 +149,12 @@ def _make_mechjeb_services():
             params=[_this("ManeuverPlanner")], class_name="OperationPeriapsis"),
 
         # OperationCircularize
+        # NOTE: MechJeb 2.15.2 does NOT expose Operation.getErrorMessage(); only
+        # MakeNode/MakeNodes are present. Node creation must remain decoupled
+        # from the (absent) error-readback accessor — see the regression test
+        # `test_node_creation_independent_of_error_message_accessor` below.
         _make_proc("OperationCircularize_MakeNodes",
                    params=[_this("OperationCircularize")], return_code=TC_LIST),
-        _make_proc("OperationCircularize_get_ErrorMessage",
-                   params=[_this("OperationCircularize")], return_code=TC_STRING),
 
         # OperationApoapsis
         _make_proc("OperationApoapsis_MakeNodes",
@@ -479,6 +481,66 @@ def test_circularize_node_creation_and_execution(mechjeb_env):
         )
         assert exec_calls == [{}]
         assert result[0].text == "OK"
+
+
+def test_node_creation_independent_of_error_message_accessor(mechjeb_env):
+    """Regression: maneuver-node creation must not depend on Operation.getErrorMessage().
+
+    MechJeb 2.15.2 does not expose ``Operation.getErrorMessage()``; only
+    ``MakeNode`` / ``MakeNodes`` are present on the Operation* classes. This
+    test pins two invariants so a future "let me enrich errors by calling
+    get_ErrorMessage" refactor can't silently couple them:
+
+      1. Discovery registers ``*_make_nodes`` even when no
+         ``*_get_error_message`` procedure exists in the schema.
+      2. The OperationException wrapper in ``bridge.call_tool`` produces the
+         structured "MechJeb operation error" message using only the RPC
+         exception text — it never reads ``error_message`` off the proxy.
+    """
+    mechjeb_env.conn.krpc.get_services.return_value = _make_mechjeb_services()
+    mechjeb_env.conn.mech_jeb.api_ready = True
+
+    error_message_reads: list = []
+
+    class _CircularizeProxy:
+        def __init__(self, client, object_id):
+            self._client = client
+            self._object_id = object_id
+
+        def make_nodes(self, **kwargs):
+            raise krpc.error.RPCError(
+                "OperationException: no orbit to circularize"
+            )
+
+        @property
+        def error_message(self):
+            error_message_reads.append("read")
+            raise AssertionError(
+                "bridge must not read Operation.error_message during error wrapping"
+            )
+
+    mechjeb_env.module.OperationCircularize = _CircularizeProxy
+
+    with patch("krpc_mcp.bridge.get_connection", return_value=mechjeb_env.conn):
+        from krpc_mcp.bridge import KrpcBridge
+        bridge = KrpcBridge()
+        names = {t.name for t in bridge.list_tools()}
+
+        # Invariant 1: node-creation tool registered, error-readback tool absent.
+        assert "mech_jeb_operation_circularize_make_nodes" in names
+        assert "mech_jeb_operation_apoapsis_make_nodes" in names
+        assert not any(n.endswith("_get_error_message") for n in names), (
+            "MechJeb 2.15.2 schema must not expose *_get_error_message tools"
+        )
+
+        # Invariant 2: OperationException wrapping uses RPC exception text only.
+        result = bridge.call_tool(
+            "mech_jeb_operation_circularize_make_nodes", {"this": 20}
+        )
+
+    assert "MechJeb operation error" in result[0].text
+    assert "no orbit to circularize" in result[0].text
+    assert error_message_reads == []
 
 
 # ---------------------------------------------------------------------------

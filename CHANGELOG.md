@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-05-05
+
+### Added
+
+- Added curated AI-copilot and mission-assist tooling, including
+  `mission_assist_flight_snapshot` for one-call vessel/orbit/resource/MechJeb
+  state and `mission_assist_plan_goal` for phased plans such as landing a
+  vessel on Duna.
+- Added a MechJeb-first agent workflow for broad mission goals: target body
+  setup, maneuver planning, interplanetary transfer, course correction,
+  Node Executor autowarp, arrival capture, and landing autopilot handoff.
+- Added curated interplanetary MechJeb operations for transfer, course
+  correction, plane/inclination, Lambert, local orbit shaping, and node
+  execution.
+
+### Changed
+
+- Default MCP discovery now exposes the important copilot surface instead of
+  every supported low-level kRPC procedure. Set `KRPC_MCP_TOOL_MODE=full` for
+  the full 1:1 kRPC debugging surface.
+- Updated the Claude Code mission-operator skill to use MechJeb, maneuver
+  planner, Node Executor, and warping as first-class allies for long-running
+  mission automation.
+- Refreshed README and operator docs to describe the curated tool surface and
+  the MechJeb-first mission flow.
+
 ## [0.1.1] - 2026-05-04
 
 ### Fixed
@@ -34,6 +60,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - CI pipeline with GitHub Actions (Python 3.11 and 3.12 matrix, ruff lint, pytest)
 - MIT License, CONTRIBUTING.md, CODE_OF_CONDUCT.md, SECURITY.md
 
-[Unreleased]: https://github.com/MaiaJP-AIXplain/krpc-mcp/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/MaiaJP-AIXplain/krpc-mcp/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/MaiaJP-AIXplain/krpc-mcp/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/MaiaJP-AIXplain/krpc-mcp/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/MaiaJP-AIXplain/krpc-mcp/releases/tag/v0.1.0

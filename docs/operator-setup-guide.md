@@ -17,7 +17,7 @@ Setup is complete when all of the following are true:
 - Python 3.11+
 - An MCP host (Claude Desktop or Claude Code)
 
-Optional (for MechJeb tools):
+Recommended for copilot/mission-assist automation:
 
 - MechJeb2
 - KRPC.MechJeb
@@ -27,8 +27,8 @@ Optional (for MechJeb tools):
 Install these into your KSP `GameData` folder:
 
 - kRPC
-- Optional: MechJeb2
-- Optional: KRPC.MechJeb (only if MechJeb MCP tools are needed)
+- MechJeb2
+- KRPC.MechJeb
 
 Recommended folder layout:
 
@@ -36,8 +36,8 @@ Recommended folder layout:
 KSP/
   GameData/
     kRPC/
-    MechJeb2/            # optional
-    KRPC.MechJeb/        # optional
+    MechJeb2/
+    KRPC.MechJeb/
 ```
 
 Then launch KSP and load into flight view.
@@ -128,8 +128,9 @@ Run these checks in order from your MCP host:
 
 If MechJeb is installed:
 
-1. Ask: "List available MechJeb tools."
+1. Ask: "Get MechJeb API readiness."
 2. Ask: "Get MechJeb ascent autopilot handle."
+3. For mission-level actions, prefer MechJeb tools before raw `space_center_*` control tools.
 
 Expected result: tool calls succeed with live data and no connection errors.
 

@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "krpc-mcp"
-version = "0.1.1"
+version = "0.2.0"
 description = "Model Context Protocol (MCP) server for kRPC — control Kerbal Space Program with Claude AI"
 readme = "README.md"
 license = { text = "MIT" }
